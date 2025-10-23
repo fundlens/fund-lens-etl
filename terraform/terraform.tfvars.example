@@ -1,0 +1,50 @@
+# =============================================================================
+# ETL Pipeline Terraform Variables Example
+# =============================================================================
+# Copy this file to terraform.tfvars and fill in your actual values
+# DO NOT commit terraform.tfvars to version control
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Shared Infrastructure State Configuration
+# -----------------------------------------------------------------------------
+# These values reference where the shared infrastructure Terraform state is stored
+
+shared_state_resource_group_name  = "your-tfstate-rg"
+shared_state_storage_account_name = "yourtfstatestorage"
+shared_state_container_name       = "tfstate"
+shared_state_key                  = "shared-infrastructure/terraform.tfstate"
+
+# -----------------------------------------------------------------------------
+# Project Configuration
+# -----------------------------------------------------------------------------
+
+project_name = "fund-lens"
+environment  = "production"
+
+# -----------------------------------------------------------------------------
+# Network Security
+# -----------------------------------------------------------------------------
+# Your IP address(es) in CIDR notation for SSH and Prefect UI access
+# Find your IP at: https://whatismyipaddress.com/
+# Format: ["1.2.3.4/30"] for a single IP
+#         ["1.2.3.0/24"] for a range
+
+allowed_ssh_ips = ["0.0.0.0/0"]  # REPLACE WITH YOUR ACTUAL IP!
+
+# -----------------------------------------------------------------------------
+# Virtual Machine Configuration
+# -----------------------------------------------------------------------------
+
+vm_size              = "Standard_B2s"      # 2 vCPU, 4 GB RAM
+admin_username       = "azureuser"
+os_disk_storage_type = "Standard_LRS"      # Standard HDD
+os_disk_size_gb      = 30
+
+# -----------------------------------------------------------------------------
+# SSH Configuration
+# -----------------------------------------------------------------------------
+# Paste the contents of your public SSH key (e.g., ~/.ssh/id_rsa.pub)
+# Generate one with: ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+
+ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC... your-email@example.com"

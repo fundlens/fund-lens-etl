@@ -1,0 +1,63 @@
+#file: noinspection UndefinedAction
+name: Deploy ETL Pipeline
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+env:
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_USE_OIDC: true
+
+jobs:
+  terraform:
+    name: 'Terraform Infrastructure'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: ./terraform
+    env:
+      TF_BACKEND_resource_group_name: ${{ secrets.TF_BACKEND_RESOURCE_GROUP_NAME }}
+      TF_BACKEND_storage_account_name: ${{ secrets.TF_BACKEND_STORAGE_ACCOUNT_NAME }}
+      TF_BACKEND_container_name: ${{ secrets.TF_BACKEND_CONTAINER_NAME }}
+      TF_BACKEND_key: ${{ secrets.TF_BACKEND_KEY }}
+      TF_VAR_shared_state_resource_group_name: ${{ secrets.TF_VAR_SHARED_STATE_RESOURCE_GROUP_NAME }}
+      TF_VAR_shared_state_storage_account_name: ${{ secrets.TF_VAR_SHARED_STATE_STORAGE_ACCOUNT_NAME }}
+      TF_VAR_shared_state_container_name: ${{ secrets.TF_VAR_SHARED_STATE_CONTAINER_NAME }}
+      TF_VAR_shared_state_key: ${{ secrets.TF_VAR_SHARED_STATE_KEY }}
+      TF_VAR_allowed_ssh_ips: ${{ secrets.TF_VAR_ALLOWED_SSH_IPS }}
+      TF_VAR_ssh_public_key: ${{ secrets.TF_VAR_SSH_PUBLIC_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.ARM_CLIENT_ID }}
+          tenant-id: ${{ env.ARM_TENANT_ID }}
+          subscription-id: ${{ env.ARM_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=$TF_BACKEND_resource_group_name" \
+            -backend-config="storage_account_name=$TF_BACKEND_storage_account_name" \
+            -backend-config="container_name=$TF_BACKEND_container_name" \
+            -backend-config="key=$TF_BACKEND_key"
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve -input=false

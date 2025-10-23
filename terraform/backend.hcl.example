@@ -1,0 +1,13 @@
+# =============================================================================
+# Backend Configuration Example
+# =============================================================================
+# Copy this file to backend.hcl and fill in your actual values
+# DO NOT commit backend.hcl to version control
+#
+# Usage: terraform init -backend-config=backend.hcl
+# =============================================================================
+
+resource_group_name  = "your-etl-tfstate-rg"
+storage_account_name = "youretltfstate"
+container_name       = "tfstate"
+key                  = "etl-pipeline/terraform.tfstate"
