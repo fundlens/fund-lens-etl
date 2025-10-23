@@ -10,18 +10,29 @@ data "terraform_remote_state" "shared" {
 }
 
 locals {
+  # Common tags for all resources
   common_tags = {
     Project     = var.project_name
     Environment = var.environment
     ManagedBy   = "Terraform"
     Component   = "ETL-Pipeline"
   }
+
+  # Naming prefix for resources
   name_prefix = "${var.project_name}-${var.environment}-etl"
+
+  # Referenced shared infrastructure values
   resource_group_name  = data.terraform_remote_state.shared.outputs.resource_group_name
-  location             = data.terraform_remote_state.shared.outputs.location
-  subnet_id            = data.terraform_remote_state.shared.outputs.private_subnet_id
+  location             = "eastus"  # Hardcode or add as variable - not in shared outputs
+  vnet_id              = data.terraform_remote_state.shared.outputs.vnet_id
+  vnet_name            = data.terraform_remote_state.shared.outputs.vnet_name
+  subnet_id            = data.terraform_remote_state.shared.outputs.vm_subnet_id
   storage_account_name = data.terraform_remote_state.shared.outputs.storage_account_name
-  postgres_fqdn        = data.terraform_remote_state.shared.outputs.postgres_fqdn
+  postgres_fqdn        = data.terraform_remote_state.shared.outputs.postgres_server_fqdn
+}
+
+data "azurerm_resource_group" "shared" {
+  name = local.resource_group_name
 }
 
 resource "azurerm_user_assigned_identity" "etl_vm" {
@@ -45,7 +56,7 @@ resource "azurerm_role_assignment" "etl_vm_storage_account" {
 }
 
 resource "azurerm_role_assignment" "etl_vm_reader" {
-  scope                = data.terraform_remote_state.shared.outputs.resource_group_id
+  scope                = data.azurerm_resource_group.shared.id
   role_definition_name = "Reader"
   principal_id         = azurerm_user_assigned_identity.etl_vm.principal_id
 }
