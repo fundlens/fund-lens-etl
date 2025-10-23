@@ -26,13 +26,13 @@ jobs:
       run:
         working-directory: ./terraform
     env:
-      TF_BACKEND_resource_group_name: ${{ secrets.TF_BACKEND_RESOURCE_GROUP_NAME }}
-      TF_BACKEND_storage_account_name: ${{ secrets.TF_BACKEND_STORAGE_ACCOUNT_NAME }}
-      TF_BACKEND_container_name: ${{ secrets.TF_BACKEND_CONTAINER_NAME }}
+      TF_BACKEND_resource_group_name: ${{ secrets.TF_STATE_RESOURCE_GROUP }}
+      TF_BACKEND_storage_account_name: ${{ secrets.TF_STATE_STORAGE_ACCOUNT }}
+      TF_BACKEND_container_name: ${{ secrets.TF_STATE_CONTAINER }}
       TF_BACKEND_key: ${{ secrets.TF_BACKEND_KEY }}
-      TF_VAR_shared_state_resource_group_name: ${{ secrets.TF_VAR_SHARED_STATE_RESOURCE_GROUP_NAME }}
-      TF_VAR_shared_state_storage_account_name: ${{ secrets.TF_VAR_SHARED_STATE_STORAGE_ACCOUNT_NAME }}
-      TF_VAR_shared_state_container_name: ${{ secrets.TF_VAR_SHARED_STATE_CONTAINER_NAME }}
+      TF_VAR_shared_state_resource_group_name: ${{ env.TF_BACKEND_resource_group_name }}
+      TF_VAR_shared_state_storage_account_name: ${{ env.TF_BACKEND_storage_account_name }}
+      TF_VAR_shared_state_container_name: ${{ env.TF_BACKEND_container_name }}
       TF_VAR_shared_state_key: ${{ secrets.TF_VAR_SHARED_STATE_KEY }}
       TF_VAR_allowed_ssh_ips: ${{ secrets.TF_VAR_ALLOWED_SSH_IPS }}
       TF_VAR_ssh_public_key: ${{ secrets.TF_VAR_SSH_PUBLIC_KEY }}
