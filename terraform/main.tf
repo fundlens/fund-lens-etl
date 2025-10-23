@@ -23,16 +23,24 @@ locals {
 
   # Referenced shared infrastructure values
   resource_group_name  = data.terraform_remote_state.shared.outputs.resource_group_name
-  location             = "eastus"  # Hardcode or add as variable - not in shared outputs
-  vnet_id              = data.terraform_remote_state.shared.outputs.vnet_id
   vnet_name            = data.terraform_remote_state.shared.outputs.vnet_name
-  subnet_id            = data.terraform_remote_state.shared.outputs.vm_subnet_id
   storage_account_name = data.terraform_remote_state.shared.outputs.storage_account_name
   postgres_fqdn        = data.terraform_remote_state.shared.outputs.postgres_server_fqdn
 }
 
 data "azurerm_resource_group" "shared" {
   name = local.resource_group_name
+}
+
+data "azurerm_subnet" "vm" {
+  name                 = "fund-lens-vm-subnet"
+  virtual_network_name = local.vnet_name
+  resource_group_name  = data.azurerm_resource_group.shared.name
+}
+
+locals {
+  location  = data.azurerm_resource_group.shared.location
+  subnet_id = data.azurerm_subnet.vm.id  # Changed to use data source
 }
 
 resource "azurerm_user_assigned_identity" "etl_vm" {

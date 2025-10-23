@@ -17,7 +17,7 @@ env:
 
 jobs:
   terraform:
-    name: 'Terraform Infrastructure'
+    name: Terraform
     runs-on: ubuntu-latest
     permissions:
       id-token: write
