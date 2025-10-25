@@ -232,3 +232,6 @@ tmp/
 temp/
 *.tmp
 *.bak
+
+# Test data
+data
