@@ -1,4 +1,5 @@
 """Database module."""
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -10,15 +11,11 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 engine = create_engine(
     DATABASE_URL,
     echo=True,  # Set to False in production to disable SQL logging
-    pool_pre_ping=True  # Verify connections before using them
+    pool_pre_ping=True,  # Verify connections before using them
 )
 
 # Create session factory
-SessionLocal = sessionmaker(
-    autocommit=False,
-    autoflush=False,
-    bind=engine
-)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Create declarative base for models
 Base = declarative_base()

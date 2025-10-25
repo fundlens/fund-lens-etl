@@ -1,4 +1,5 @@
 """Repository for raw_filings table operations."""
+
 import logging
 from typing import Optional, List
 from datetime import datetime
@@ -37,7 +38,9 @@ class RawFilingRepo:
         Raises:
             SQLAlchemyError: If database operation fails
         """
-        logger.debug(f"Inserting raw filing: source={raw_filing.source}, file_hash={raw_filing.file_hash}")
+        logger.debug(
+            f"Inserting raw filing: source={raw_filing.source}, file_hash={raw_filing.file_hash}"
+        )
         session.add(raw_filing)
         session.flush()  # Flush to get the ID without committing
         logger.info(f"Inserted raw filing with id={raw_filing.id}")
@@ -58,11 +61,11 @@ class RawFilingRepo:
         return session.execute(stmt).scalar_one_or_none()
 
     def get_by_source_and_date_range(
-            self,
-            session: Session,
-            source: str,
-            start_date: Optional[datetime] = None,
-            end_date: Optional[datetime] = None
+        self,
+        session: Session,
+        source: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> List[RawFiling]:
         """
         Get raw filings by source and optional date range.

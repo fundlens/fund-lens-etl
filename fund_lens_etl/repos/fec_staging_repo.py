@@ -1,4 +1,5 @@
 """Repository for fec_contributions_staging table operations."""
+
 import logging
 from typing import Optional, List
 from sqlalchemy import select
@@ -22,7 +23,9 @@ class FECContributionStagingRepo:
         """Initialize the repository."""
         pass
 
-    def insert(self, session: Session, contribution: FECContributionStaging) -> FECContributionStaging:
+    def insert(
+        self, session: Session, contribution: FECContributionStaging
+    ) -> FECContributionStaging:
         """
         Insert a staging contribution record into the database.
 
@@ -45,7 +48,9 @@ class FECContributionStagingRepo:
         logger.info(f"Inserted staging contribution with id={contribution.id}")
         return contribution
 
-    def get_by_raw_filing_id(self, session: Session, raw_filing_id: int) -> List[FECContributionStaging]:
+    def get_by_raw_filing_id(
+        self, session: Session, raw_filing_id: int
+    ) -> List[FECContributionStaging]:
         """
         Get all staging contributions from a specific raw filing.
 
@@ -56,16 +61,16 @@ class FECContributionStagingRepo:
         Returns:
             List of FECContributionStaging records
         """
-        stmt = select(FECContributionStaging).where(
-            FECContributionStaging.raw_filing_id == raw_filing_id
-        ).order_by(FECContributionStaging.ingested_at.desc())
+        stmt = (
+            select(FECContributionStaging)
+            .where(FECContributionStaging.raw_filing_id == raw_filing_id)
+            .order_by(FECContributionStaging.ingested_at.desc())
+        )
 
         return list(session.execute(stmt).scalars().all())
 
     def get_unstandardized(
-            self,
-            session: Session,
-            limit: Optional[int] = None
+        self, session: Session, limit: Optional[int] = None
     ) -> List[FECContributionStaging]:
         """
         Get contributions that haven't been standardized yet.
@@ -77,9 +82,11 @@ class FECContributionStagingRepo:
         Returns:
             List of FECContributionStaging records where standardized=False
         """
-        stmt = select(FECContributionStaging).where(
-            FECContributionStaging.standardized.is_(False)
-        ).order_by(FECContributionStaging.ingested_at.asc())
+        stmt = (
+            select(FECContributionStaging)
+            .where(FECContributionStaging.standardized.is_(False))
+            .order_by(FECContributionStaging.ingested_at.asc())
+        )
 
         if limit:
             stmt = stmt.limit(limit)
@@ -87,11 +94,11 @@ class FECContributionStagingRepo:
         return list(session.execute(stmt).scalars().all())
 
     def get_by_date_range(
-            self,
-            session: Session,
-            start_date: Optional[str] = None,
-            end_date: Optional[str] = None,
-            standardized: Optional[bool] = None
+        self,
+        session: Session,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        standardized: Optional[bool] = None,
     ) -> List[FECContributionStaging]:
         """
         Get contributions by transaction date range.

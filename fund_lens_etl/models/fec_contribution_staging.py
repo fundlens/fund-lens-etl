@@ -1,5 +1,15 @@
 """FEC Contribution Staging model"""
-from sqlalchemy import Column, BigInteger, String, Text, TIMESTAMP, Boolean, ForeignKey, func
+
+from sqlalchemy import (
+    Column,
+    BigInteger,
+    String,
+    Text,
+    TIMESTAMP,
+    Boolean,
+    ForeignKey,
+    func,
+)
 from fund_lens_etl.database import Base
 
 
@@ -7,7 +17,9 @@ class FECContributionStaging(Base):
     __tablename__ = "fec_contributions_staging"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    raw_filing_id = Column(BigInteger, ForeignKey("raw_filings.id"), nullable=False, index=True)
+    raw_filing_id = Column(
+        BigInteger, ForeignKey("raw_filings.id"), nullable=False, index=True
+    )
     cmte_id = Column(String(9))
     amndt_ind = Column(String(1))
     rpt_tp = Column(String(3))

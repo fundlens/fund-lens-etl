@@ -1,5 +1,14 @@
 """Donor model"""
-from sqlalchemy import Column, BigInteger, String, Float, TIMESTAMP, func, CheckConstraint
+
+from sqlalchemy import (
+    Column,
+    BigInteger,
+    String,
+    Float,
+    TIMESTAMP,
+    func,
+    CheckConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from fund_lens_etl.database import Base
 
@@ -17,13 +26,17 @@ class Donor(Base):
     state = Column(String(2), index=True)
     zip = Column(String(9))
     entity_resolution_confidence = Column(
-        Float, CheckConstraint(
-            'entity_resolution_confidence >= 0.0 AND entity_resolution_confidence <= 1.0')
-        )
+        Float,
+        CheckConstraint(
+            "entity_resolution_confidence >= 0.0 AND entity_resolution_confidence <= 1.0"
+        ),
+    )
     aliases = Column(JSONB)
 
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
     def __repr__(self):
         return f"<Donor(id={self.id}, name='{self.canonical_name}', employer='{self.employer_canonical}')>"

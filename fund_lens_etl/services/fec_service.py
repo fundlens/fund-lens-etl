@@ -1,4 +1,5 @@
 """FEC extraction service - orchestrates client and repository operations."""
+
 import logging
 import hashlib
 import json
@@ -29,10 +30,10 @@ class FECExtractionService:
     """
 
     def __init__(
-            self,
-            fec_client: Optional[FECClient] = None,
-            raw_filing_repo: Optional[RawFilingRepo] = None,
-            fec_staging_repo: Optional[FECContributionStagingRepo] = None
+        self,
+        fec_client: Optional[FECClient] = None,
+        raw_filing_repo: Optional[RawFilingRepo] = None,
+        fec_staging_repo: Optional[FECContributionStagingRepo] = None,
     ):
         """
         Initialize the extraction service.
@@ -47,12 +48,12 @@ class FECExtractionService:
         self.fec_staging_repo = fec_staging_repo or FECContributionStagingRepo()
 
     def extract_and_store_contributions(
-            self,
-            session: Session,
-            contributor_state: str,
-            two_year_transaction_period: int,
-            source: str = "fec_api",
-            max_results: Optional[int] = None
+        self,
+        session: Session,
+        contributor_state: str,
+        two_year_transaction_period: int,
+        source: str = "fec_api",
+        max_results: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Extract contributions from FEC API and store in database.
@@ -80,7 +81,7 @@ class FECExtractionService:
             contributions = self.fec_client.get_contributions(
                 contributor_state=contributor_state,
                 two_year_transaction_period=two_year_transaction_period,
-                max_results=max_results  # Pass the limit through
+                max_results=max_results,  # Pass the limit through
             )
 
             # Step 2: Calculate file hash for deduplication
@@ -90,13 +91,15 @@ class FECExtractionService:
             # Step 3: Check if we've already processed this data
             existing_filing = self.raw_filing_repo.get_by_file_hash(session, file_hash)
             if existing_filing:
-                logger.info(f"Data already processed (raw_filing_id={existing_filing.id}). Skipping.")
+                logger.info(
+                    f"Data already processed (raw_filing_id={existing_filing.id}). Skipping."
+                )
                 return {
                     "contributions_fetched": len(contributions),
                     "raw_filing_id": existing_filing.id,
                     "contributions_stored": 0,
                     "file_hash": file_hash,
-                    "skipped": True
+                    "skipped": True,
                 }
 
             # Step 4: Store raw filing record
@@ -107,8 +110,8 @@ class FECExtractionService:
                 file_metadata={
                     "contributor_state": contributor_state,
                     "two_year_transaction_period": two_year_transaction_period,
-                    "record_count": len(contributions)
-                }
+                    "record_count": len(contributions),
+                },
             )
             raw_filing = self.raw_filing_repo.insert(session, raw_filing)
             logger.info(f"Stored raw filing with id={raw_filing.id}")
@@ -117,7 +120,7 @@ class FECExtractionService:
             stored_count = self._store_contributions_staging(
                 session=session,
                 raw_filing_id=raw_filing.id,
-                contributions=contributions
+                contributions=contributions,
             )
 
             # Step 6: Commit transaction
@@ -131,7 +134,7 @@ class FECExtractionService:
                 "contributions_fetched": len(contributions),
                 "raw_filing_id": raw_filing.id,
                 "contributions_stored": stored_count,
-                "file_hash": file_hash
+                "file_hash": file_hash,
             }
 
         except Exception as e:
@@ -150,10 +153,7 @@ class FECExtractionService:
             SHA-256 hash as hexadecimal string
         """
         # Sort contributions by sub_id for consistent hashing
-        sorted_contributions = sorted(
-            contributions,
-            key=lambda x: x.get('sub_id', '')
-        )
+        sorted_contributions = sorted(contributions, key=lambda x: x.get("sub_id", ""))
 
         # Serialize to JSON with sorted keys for consistency
         content_json = json.dumps(sorted_contributions, sort_keys=True, default=str)
@@ -163,11 +163,11 @@ class FECExtractionService:
         return hash_obj.hexdigest()
 
     def _create_raw_filing(
-            self,
-            contributions: List[Dict[str, Any]],
-            source: str,
-            file_hash: str,
-            file_metadata: Dict[str, Any]
+        self,
+        contributions: List[Dict[str, Any]],
+        source: str,
+        file_hash: str,
+        file_metadata: Dict[str, Any],
     ) -> RawFiling:
         """
         Create a RawFiling model instance from contributions data.
@@ -182,25 +182,21 @@ class FECExtractionService:
             RawFiling model instance (not yet persisted)
         """
         # Construct a virtual "file URL" for API extractions
-        contributor_state = file_metadata.get('contributor_state', 'unknown')
-        period = file_metadata.get('two_year_transaction_period', 'unknown')
-        file_url = \
-            f"fec_api://schedules/schedule_a?contributor_state={contributor_state}&two_year_transaction_period={period}"
+        contributor_state = file_metadata.get("contributor_state", "unknown")
+        period = file_metadata.get("two_year_transaction_period", "unknown")
+        file_url = f"fec_api://schedules/schedule_a?contributor_state={contributor_state}&two_year_transaction_period={period}"
 
         raw_filing = RawFiling(
             source=source,
             file_url=file_url,
             file_hash=file_hash,
             raw_content=contributions,  # JSONB column stores the list directly
-            file_metadata=file_metadata
+            file_metadata=file_metadata,
         )
         return raw_filing
 
     def _store_contributions_staging(
-            self,
-            session: Session,
-            raw_filing_id: int,
-            contributions: List[Dict[str, Any]]
+        self, session: Session, raw_filing_id: int, contributions: List[Dict[str, Any]]
     ) -> int:
         """
         Store individual contributions in staging table.
@@ -217,8 +213,7 @@ class FECExtractionService:
 
         for contrib in contributions:
             staging_record = self._map_contribution_to_staging(
-                raw_filing_id=raw_filing_id,
-                contribution=contrib
+                raw_filing_id=raw_filing_id, contribution=contrib
             )
             self.fec_staging_repo.insert(session, staging_record)
             stored_count += 1
@@ -227,9 +222,7 @@ class FECExtractionService:
         return stored_count
 
     def _map_contribution_to_staging(
-            self,
-            raw_filing_id: int,
-            contribution: Dict[str, Any]
+        self, raw_filing_id: int, contribution: Dict[str, Any]
     ) -> FECContributionStaging:
         """
         Map FEC API contribution dictionary to staging model.
@@ -242,36 +235,36 @@ class FECExtractionService:
             FECContributionStaging model instance (not yet persisted)
         """
         # Convert date from API format (YYYY-MM-DD) to FEC format (YYYYMMDD)
-        transaction_date = contribution.get('contribution_receipt_date')
-        if transaction_date and '-' in transaction_date:
-            transaction_date = transaction_date.replace('-', '')[:8]
+        transaction_date = contribution.get("contribution_receipt_date")
+        if transaction_date and "-" in transaction_date:
+            transaction_date = transaction_date.replace("-", "")[:8]
 
         # Convert amount to string if it's a number
-        transaction_amt = contribution.get('contribution_receipt_amount')
+        transaction_amt = contribution.get("contribution_receipt_amount")
         if transaction_amt is not None:
             transaction_amt = str(transaction_amt)
 
         return FECContributionStaging(
             raw_filing_id=raw_filing_id,
-            cmte_id=contribution.get('committee_id'),
-            amndt_ind=contribution.get('amendment_indicator'),
-            rpt_tp=contribution.get('report_type'),
-            transaction_pgi=contribution.get('election_type'),
-            image_num=contribution.get('image_number'),
-            transaction_tp=contribution.get('transaction_type'),
-            entity_tp=contribution.get('entity_type'),
-            name=contribution.get('contributor_name'),
-            city=contribution.get('contributor_city'),
-            state=contribution.get('contributor_state'),
-            zip_code=contribution.get('contributor_zip'),
-            employer=contribution.get('contributor_employer'),
-            occupation=contribution.get('contributor_occupation'),
+            cmte_id=contribution.get("committee_id"),
+            amndt_ind=contribution.get("amendment_indicator"),
+            rpt_tp=contribution.get("report_type"),
+            transaction_pgi=contribution.get("election_type"),
+            image_num=contribution.get("image_number"),
+            transaction_tp=contribution.get("transaction_type"),
+            entity_tp=contribution.get("entity_type"),
+            name=contribution.get("contributor_name"),
+            city=contribution.get("contributor_city"),
+            state=contribution.get("contributor_state"),
+            zip_code=contribution.get("contributor_zip"),
+            employer=contribution.get("contributor_employer"),
+            occupation=contribution.get("contributor_occupation"),
             transaction_dt=transaction_date,
             transaction_amt=transaction_amt,
-            other_id=contribution.get('other_id'),
-            tran_id=contribution.get('transaction_id'),
-            file_num=contribution.get('file_number'),
-            memo_cd=contribution.get('memo_code'),
-            memo_text=contribution.get('memo_text'),
-            sub_id=contribution.get('sub_id')
+            other_id=contribution.get("other_id"),
+            tran_id=contribution.get("transaction_id"),
+            file_num=contribution.get("file_number"),
+            memo_cd=contribution.get("memo_code"),
+            memo_text=contribution.get("memo_text"),
+            sub_id=contribution.get("sub_id"),
         )

@@ -1,7 +1,7 @@
 """Create raw_filings table
 
 Revision ID: 79bc0fd8ed87
-Revises: 
+Revises:
 Create Date: 2025-10-25 12:44:45.688334
 
 """

@@ -1,4 +1,5 @@
 """FEC API Client with rate limiting and retry logic."""
+
 import time
 import logging
 from typing import Dict, List, Any, Optional
@@ -12,11 +13,13 @@ logger = logging.getLogger(__name__)
 
 class FECAPIError(Exception):
     """Base exception for FEC API errors."""
+
     pass
 
 
 class FECRateLimitError(FECAPIError):
     """Raised when rate limit is exceeded and cannot be retried."""
+
     pass
 
 
@@ -77,9 +80,7 @@ class FECClient:
         self._call_times.append(datetime.now())
 
     def _make_request(
-            self,
-            endpoint: str,
-            params: Optional[Dict[str, Any]] = None
+        self, endpoint: str, params: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Make a single API request with retries.
@@ -98,7 +99,7 @@ class FECClient:
             params = {}
 
         # Add API key to params
-        params['api_key'] = self.api_key
+        params["api_key"] = self.api_key
 
         url = f"{self.base_url}{endpoint}"
 
@@ -118,8 +119,10 @@ class FECClient:
                 # Handle rate limit responses
                 if response.status_code == 429:
                     if attempt < self.max_retries:
-                        wait_time = self.backoff_factor ** attempt
-                        logger.warning(f"Rate limited by API. Waiting {wait_time}s before retry...")
+                        wait_time = self.backoff_factor**attempt
+                        logger.warning(
+                            f"Rate limited by API. Waiting {wait_time}s before retry..."
+                        )
                         time.sleep(wait_time)
                         continue
                     else:
@@ -128,7 +131,7 @@ class FECClient:
                 # Handle server errors with retry
                 if response.status_code in self.retry_statuses:
                     if attempt < self.max_retries:
-                        wait_time = self.backoff_factor ** attempt
+                        wait_time = self.backoff_factor**attempt
                         logger.warning(
                             f"Server error {response.status_code}. "
                             f"Waiting {wait_time}s before retry..."
@@ -145,30 +148,38 @@ class FECClient:
 
             except requests.exceptions.Timeout:
                 if attempt < self.max_retries:
-                    wait_time = self.backoff_factor ** attempt
-                    logger.warning(f"Request timeout. Waiting {wait_time}s before retry...")
+                    wait_time = self.backoff_factor**attempt
+                    logger.warning(
+                        f"Request timeout. Waiting {wait_time}s before retry..."
+                    )
                     time.sleep(wait_time)
                     continue
                 else:
-                    raise FECAPIError(f"Request timeout after {self.max_retries + 1} attempts")
+                    raise FECAPIError(
+                        f"Request timeout after {self.max_retries + 1} attempts"
+                    )
 
             except requests.exceptions.RequestException as e:
                 if attempt < self.max_retries:
-                    wait_time = self.backoff_factor ** attempt
-                    logger.warning(f"Request failed: {e}. Waiting {wait_time}s before retry...")
+                    wait_time = self.backoff_factor**attempt
+                    logger.warning(
+                        f"Request failed: {e}. Waiting {wait_time}s before retry..."
+                    )
                     time.sleep(wait_time)
                     continue
                 else:
-                    raise FECAPIError(f"Request failed after {self.max_retries + 1} attempts: {e}")
+                    raise FECAPIError(
+                        f"Request failed after {self.max_retries + 1} attempts: {e}"
+                    )
 
         raise FECAPIError("Unexpected error in retry loop")
 
     def get_contributions(
-            self,
-            contributor_state: Optional[str] = None,
-            two_year_transaction_period: Optional[int] = None,
-            committee_id: Optional[str] = None,
-            max_results: Optional[int] = None
+        self,
+        contributor_state: Optional[str] = None,
+        two_year_transaction_period: Optional[int] = None,
+        committee_id: Optional[str] = None,
+        max_results: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
         Fetch individual contributions with automatic pagination.
@@ -183,28 +194,28 @@ class FECClient:
             List of contribution dictionaries
         """
         params = {
-            'per_page': self.results_per_page,
-            'sort': '-contribution_receipt_date',  # Negative for descending
-            'sort_hide_null': 'false'
+            "per_page": self.results_per_page,
+            "sort": "-contribution_receipt_date",  # Negative for descending
+            "sort_hide_null": "false",
         }
 
         if contributor_state:
-            params['contributor_state'] = contributor_state
+            params["contributor_state"] = contributor_state
         if two_year_transaction_period:
-            params['two_year_transaction_period'] = two_year_transaction_period
+            params["two_year_transaction_period"] = two_year_transaction_period
         if committee_id:
-            params['committee_id'] = committee_id
+            params["committee_id"] = committee_id
 
         all_results = []
         page = 1
 
         while True:
-            params['page'] = page
+            params["page"] = page
 
             logger.info(f"Fetching page {page} of contributions...")
-            response = self._make_request('/schedules/schedule_a/', params)
+            response = self._make_request("/schedules/schedule_a/", params)
 
-            results = response.get('results', [])
+            results = response.get("results", [])
             if not results:
                 break
 
@@ -216,8 +227,8 @@ class FECClient:
                 break
 
             # Check if there are more pages
-            pagination = response.get('pagination', {})
-            if page >= pagination.get('pages', 1):
+            pagination = response.get("pagination", {})
+            if page >= pagination.get("pages", 1):
                 break
 
             page += 1

@@ -1,6 +1,20 @@
 """Contribution model"""
+
 import sqlalchemy as sa
-from sqlalchemy import Column, BigInteger, String, Integer, Date, Text, Float, Boolean, TIMESTAMP, ForeignKey, func, CheckConstraint
+from sqlalchemy import (
+    Column,
+    BigInteger,
+    String,
+    Integer,
+    Date,
+    Text,
+    Float,
+    Boolean,
+    TIMESTAMP,
+    ForeignKey,
+    func,
+    CheckConstraint,
+)
 from sqlalchemy.orm import relationship
 
 from fund_lens_etl.database import Base
@@ -22,24 +36,33 @@ class Contribution(Base):
     donor_zip = Column(String(9))
 
     donor_id = Column(BigInteger, ForeignKey("donors.id"), index=True)
-    recipient_committee_id = Column(BigInteger, ForeignKey("committees.id"), nullable=False, index=True)
+    recipient_committee_id = Column(
+        BigInteger, ForeignKey("committees.id"), nullable=False, index=True
+    )
     recipient_candidate_id = Column(BigInteger, ForeignKey("candidates.id"), index=True)
 
-    contribution_type = Column(String(20), nullable=False)  # individual, pac, party, self
+    contribution_type = Column(
+        String(20), nullable=False
+    )  # individual, pac, party, self
     transaction_type = Column(String(3))  # FEC transaction type code
     election_type = Column(String(20))  # primary, general, runoff, special
     is_itemized = Column(Boolean, nullable=False, default=True)
     memo_text = Column(Text)
 
-    data_quality_score = Column(Float, CheckConstraint('data_quality_score >= 0.0 AND data_quality_score <= 1.0'))
+    data_quality_score = Column(
+        Float,
+        CheckConstraint("data_quality_score >= 0.0 AND data_quality_score <= 1.0"),
+    )
     needs_review = Column(Boolean, nullable=False, default=False, index=True)
 
     __table_args__ = (
-        sa.UniqueConstraint('source_table', 'source_id', name='uq_contribution_source'),
+        sa.UniqueConstraint("source_table", "source_id", name="uq_contribution_source"),
     )
 
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
+    updated_at = Column(
+        TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now()
+    )
 
     donor = relationship("Donor", backref="contributions")
     committee = relationship("Committee", backref="contributions_received")

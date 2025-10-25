@@ -1,4 +1,5 @@
 """Raw Filing Model"""
+
 from sqlalchemy import Column, BigInteger, String, Text, TIMESTAMP, func
 from sqlalchemy.dialects.postgresql import JSONB
 from fund_lens_etl.database import Base

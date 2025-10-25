@@ -40,4 +40,5 @@ repos:
     hooks:
       - id: mypy
         args: [--ignore-missing-imports, --show-error-codes]
+        additional_dependencies: [types-requests]
         files: ^fund_lens_etl/.*\.py$

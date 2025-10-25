@@ -1,6 +1,16 @@
 """Contribution Aggregate model"""
+
 import sqlalchemy as sa
-from sqlalchemy import Column, BigInteger, String, Integer, Date, TIMESTAMP, ForeignKey, func
+from sqlalchemy import (
+    Column,
+    BigInteger,
+    String,
+    Integer,
+    Date,
+    TIMESTAMP,
+    ForeignKey,
+    func,
+)
 from sqlalchemy.orm import relationship
 from fund_lens_etl.database import Base
 
@@ -9,7 +19,9 @@ class ContributionAggregate(Base):
     __tablename__ = "contribution_aggregates"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    candidate_id = Column(BigInteger, ForeignKey("candidates.id"), nullable=False, index=True)
+    candidate_id = Column(
+        BigInteger, ForeignKey("candidates.id"), nullable=False, index=True
+    )
     aggregation_period = Column(String(20), nullable=False)  # cycle, quarter, month
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)
@@ -25,7 +37,12 @@ class ContributionAggregate(Base):
     party_contributions_cents = Column(Integer, nullable=False, default=0)
 
     __table_args__ = (
-        sa.UniqueConstraint('candidate_id', 'aggregation_period', 'period_start', name='uq_aggregate_period'),
+        sa.UniqueConstraint(
+            "candidate_id",
+            "aggregation_period",
+            "period_start",
+            name="uq_aggregate_period",
+        ),
     )
 
     calculated_at = Column(TIMESTAMP, nullable=False, server_default=func.now())

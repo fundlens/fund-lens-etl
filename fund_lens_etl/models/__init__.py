@@ -1,4 +1,5 @@
 """Models package."""
+
 from fund_lens_etl.database import Base
 from fund_lens_etl.models.raw_filing import RawFiling
 from fund_lens_etl.models.committee import Committee
