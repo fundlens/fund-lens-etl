@@ -8,10 +8,20 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "alembic (>=1.17.0,<2.0.0)"
+    "alembic (>=1.17.0,<2.0.0)",
+    "sqlalchemy (>=2.0.44,<3.0.0)",
+    "psycopg2-binary (>=2.9.11,<3.0.0)",
+    "python-dotenv (>=1.1.1,<2.0.0)",
+    "notebook (>=7.4.7,<8.0.0)"
 ]
 
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.group.dev.dependencies]
+jupyter = "^1.1.1"
+ipykernel = "^7.0.1"
+notebook = "^7.4.7"
+
