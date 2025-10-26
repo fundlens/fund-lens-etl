@@ -1,7 +1,7 @@
 """Repository for fec_contributions_staging table operations."""
 
 import logging
-from typing import Optional, List
+from typing import Optional, List, Set
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -124,3 +124,24 @@ class FECContributionStagingRepo:
         stmt = stmt.order_by(FECContributionStaging.transaction_dt.desc())
 
         return list(session.execute(stmt).scalars().all())
+
+    def get_existing_sub_ids(self, session: Session, sub_ids: List[str]) -> Set[str]:
+        """
+        Check which sub_ids already exist in the staging table.
+
+        Args:
+            session: Database session
+            sub_ids: List of FEC sub_ids to check
+
+        Returns:
+            Set of sub_ids that already exist in the database
+        """
+        if not sub_ids:
+            return set()
+
+        stmt = select(FECContributionStaging.sub_id).where(
+            FECContributionStaging.sub_id.in_(sub_ids)
+        )
+
+        result = session.execute(stmt).scalars().all()
+        return set(result)

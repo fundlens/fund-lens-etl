@@ -102,6 +102,60 @@ class FECExtractionService:
                     "skipped": True,
                 }
 
+            # Step 3b: Record-level deduplication (filter out existing sub_ids)
+            all_sub_ids = [
+                c["sub_id"] for c in contributions if c.get("sub_id") is not None
+            ]
+            existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
+                session, all_sub_ids
+            )
+
+            logger.info(f"DEBUG: Total contributions fetched: {len(contributions)}")
+            logger.info(f"DEBUG: Sub_ids to check: {len(all_sub_ids)}")
+            logger.info(f"DEBUG: Existing sub_ids found: {len(existing_sub_ids)}")
+            logger.info(f"DEBUG: Type of existing_sub_ids: {type(existing_sub_ids)}")
+            logger.info(
+                f"DEBUG: Sample of existing_sub_ids: {list(existing_sub_ids)[:5] if existing_sub_ids else 'empty'}"
+            )
+            logger.info(f"DEBUG: Sample of all_sub_ids: {all_sub_ids[:5]}")
+
+            # Add this check:
+            if existing_sub_ids:
+                overlap = set(all_sub_ids) & existing_sub_ids
+                logger.info(
+                    f"DEBUG: Overlap between all_sub_ids and existing_sub_ids: {len(overlap)}"
+                )
+                logger.info(
+                    f"DEBUG: Sample overlap: {list(overlap)[:5] if overlap else 'NONE - THIS IS THE BUG!'}"
+                )
+
+            new_contributions = [
+                c
+                for c in contributions
+                if c.get("sub_id") is not None and c["sub_id"] not in existing_sub_ids
+            ]
+
+            logger.info(
+                f"DEBUG: Are all fetched sub_ids in existing? {set(all_sub_ids).issubset(existing_sub_ids)}"
+            )
+            logger.info(
+                f"DEBUG: Total unique sub_ids in DB check: {len(set(all_sub_ids))}"
+            )
+            logger.info(
+                f"DEBUG: New contributions after filter: {len(new_contributions)}"
+            )
+
+            duplicate_count = len(contributions) - len(new_contributions)
+            if duplicate_count > 0:
+                logger.info(
+                    f"Found {duplicate_count} duplicate contributions (by sub_id). "
+                    f"Storing {len(new_contributions)} new contributions."
+                )
+
+            # Update the contributions list to only process new ones
+            original_count = len(contributions)
+            contributions = new_contributions
+
             # Step 4: Store raw filing record
             raw_filing = self._create_raw_filing(
                 contributions=contributions,
@@ -116,10 +170,15 @@ class FECExtractionService:
             raw_filing = self.raw_filing_repo.insert(session, raw_filing)
             logger.info(f"Stored raw filing with id={raw_filing.id}")
 
+            session.flush()
+
+            assert raw_filing.id is not None
+            filing_id: int = int(raw_filing.id)
+
             # Step 5: Store individual contributions in staging
             stored_count = self._store_contributions_staging(
                 session=session,
-                raw_filing_id=raw_filing.id,
+                raw_filing_id=filing_id,
                 contributions=contributions,
             )
 
@@ -131,7 +190,7 @@ class FECExtractionService:
             )
 
             return {
-                "contributions_fetched": len(contributions),
+                "contributions_fetched": original_count,  # Changed from len(contributions)
                 "raw_filing_id": raw_filing.id,
                 "contributions_stored": stored_count,
                 "file_hash": file_hash,
