@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from fund_lens_etl.clients.fec_client import FECClient
 from fund_lens_etl.repos import RawFilingRepo
 from fund_lens_etl.repos import FECContributionStagingRepo
+from fund_lens_etl.repos import ExtractionMetadataRepo
 from fund_lens_etl.services import FECExtractionService
 from fund_lens_etl.config import get_database_url
 
@@ -35,7 +36,7 @@ from fund_lens_etl.config import get_database_url
     description="Initialize database session and service layer",
     retries=3,
     retry_delay_seconds=10,
-    cache_policy=NONE,  # Add this line
+    cache_policy=NONE,
 )
 def initialize_services() -> tuple[Session, FECExtractionService]:
     """
@@ -57,6 +58,7 @@ def initialize_services() -> tuple[Session, FECExtractionService]:
     # Initialize repositories (no session needed in constructor)
     raw_filing_repo = RawFilingRepo()
     staging_repo = FECContributionStagingRepo()
+    metadata_repo = ExtractionMetadataRepo()  # Add this line
 
     # Initialize FEC client (pulls config automatically)
     fec_client = FECClient()
@@ -66,6 +68,7 @@ def initialize_services() -> tuple[Session, FECExtractionService]:
         fec_client=fec_client,
         raw_filing_repo=raw_filing_repo,
         fec_staging_repo=staging_repo,
+        metadata_repo=metadata_repo,  # Add this line
     )
 
     logger.info("Services initialized successfully")
@@ -87,13 +90,13 @@ def extract_state_contributions(
     max_results: Optional[int] = None,
 ) -> dict:
     """
-    Extract FEC contributions for a specific state and election cycle.
+    Extract FEC contributions for a specific state and election cycle using incremental extraction.
 
     Args:
         session: Database session for transactions
         fec_service: Initialized FEC extraction service
         state: Two-letter state code (e.g., "MD", "CA")
-        two_year_transaction_period: Election cycle (e.g., 2024 for 2023-2024)
+        two_year_transaction_period: Election cycle (e.g., 2026 for 2025-2026)
         max_results: Maximum records to extract (None for full extraction)
 
     Returns:
@@ -101,6 +104,7 @@ def extract_state_contributions(
             - contributions_fetched: Number of contributions fetched from API
             - contributions_stored: Number of contributions stored (after deduplication)
             - raw_filing_id: ID of the raw filing record
+            - last_processed_date: Latest contribution date processed
             - start_time: Extraction start timestamp
             - end_time: Extraction end timestamp
             - duration_seconds: Total extraction time
@@ -109,12 +113,12 @@ def extract_state_contributions(
 
     start_time = datetime.now()
     logger.info(
-        f"Starting extraction for state={state}, cycle={two_year_transaction_period}, "
+        f"Starting incremental extraction for state={state}, cycle={two_year_transaction_period}, "
         f"max_results={max_results or 'ALL'}"
     )
 
-    # Call the service to extract and store contributions
-    result = fec_service.extract_and_store_contributions(
+    # Call the incremental extraction service method
+    result = fec_service.extract_and_store_contributions_incremental(
         session=session,
         contributor_state=state,
         two_year_transaction_period=two_year_transaction_period,
@@ -130,8 +134,9 @@ def extract_state_contributions(
         "cycle": two_year_transaction_period,
         "contributions_fetched": result["contributions_fetched"],
         "contributions_stored": result["contributions_stored"],
-        "raw_filing_id": result["raw_filing_id"],
-        "file_hash": result["file_hash"],
+        "raw_filing_id": result.get("raw_filing_id"),
+        "file_hash": result.get("file_hash"),
+        "last_processed_date": result.get("last_processed_date"),
         "start_time": start_time.isoformat(),
         "end_time": end_time.isoformat(),
         "duration_seconds": duration,
@@ -139,7 +144,8 @@ def extract_state_contributions(
 
     logger.info(
         f"Extraction complete: {stats['contributions_fetched']} fetched, "
-        f"{stats['contributions_stored']} stored (deduped), "
+        f"{stats['contributions_stored']} stored, "
+        f"last_date={stats['last_processed_date']}, "
         f"took {duration:.2f}s"
     )
 

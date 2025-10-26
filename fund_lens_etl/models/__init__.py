@@ -8,6 +8,7 @@ from fund_lens_etl.models.fec_contribution_staging import FECContributionStaging
 from fund_lens_etl.models.donor import Donor
 from fund_lens_etl.models.contribution import Contribution
 from fund_lens_etl.models.contribution_aggregate import ContributionAggregate
+from fund_lens_etl.models.extraction_metadata import ExtractionMetadata
 
 __all__ = [
     "Base",
@@ -18,4 +19,5 @@ __all__ = [
     "Donor",
     "Contribution",
     "ContributionAggregate",
+    "ExtractionMetadata",
 ]

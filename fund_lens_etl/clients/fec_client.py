@@ -46,7 +46,7 @@ class FECClient:
         self.retry_statuses = config.FEC_RETRY_STATUSES
 
         # Rate limiting state
-        self._call_times: List[datetime] = []
+        self._call_times = []
 
     def _check_rate_limit(self) -> None:
         """
@@ -176,35 +176,36 @@ class FECClient:
 
     def get_contributions(
         self,
-        contributor_state: Optional[str] = None,
-        two_year_transaction_period: Optional[int] = None,
-        committee_id: Optional[str] = None,
+        contributor_state: str,
+        two_year_transaction_period: int,
+        min_date: Optional[datetime] = None,  # Add this parameter
         max_results: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Fetch individual contributions with automatic pagination.
+        Get individual contributions by state and election cycle.
 
         Args:
-            contributor_state: Two-letter state code (e.g., "MD")
-            two_year_transaction_period: Even-numbered year (e.g., 2024 for 2023-2024 cycle)
-            committee_id: Specific committee ID to filter
-            max_results: Maximum total results to return (None = all)
+            contributor_state: Two-letter state code
+            two_year_transaction_period: Election cycle (e.g., 2024 for 2023-2024)
+            min_date: Only fetch contributions on or after this date (for incremental loads)
+            max_results: Maximum number of results to return (None for all)
 
         Returns:
-            List of contribution dictionaries
+            List of contribution records
         """
         params = {
-            "per_page": self.results_per_page,
-            "sort": "-contribution_receipt_date",  # Negative for descending
-            "sort_hide_null": "false",
+            "contributor_state": contributor_state,
+            "two_year_transaction_period": two_year_transaction_period,
+            "sort": "-contribution_receipt_date",  # Newest first
         }
 
-        if contributor_state:
-            params["contributor_state"] = contributor_state
-        if two_year_transaction_period:
-            params["two_year_transaction_period"] = two_year_transaction_period
-        if committee_id:
-            params["committee_id"] = committee_id
+        # Add date filter if provided
+        if min_date:
+            # Format date as YYYY-MM-DD for FEC API
+            params["min_date"] = min_date.strftime("%Y-%m-%d")
+            logger.info(
+                f"Filtering contributions with min_date >= {params['min_date']}"
+            )
 
         all_results = []
         page = 1
