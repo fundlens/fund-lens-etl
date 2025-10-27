@@ -21,12 +21,22 @@ if not FEC_API_KEY:
 FEC_API_BASE_URL: str = os.getenv("FEC_API_BASE_URL", "https://api.open.fec.gov/v1")
 FEC_API_TIMEOUT: int = int(os.getenv("FEC_API_TIMEOUT", "30"))  # seconds
 FEC_MAX_RETRIES: int = int(os.getenv("FEC_MAX_RETRIES", "3"))
+
 FEC_RATE_LIMIT_CALLS: int = int(
     os.getenv("FEC_RATE_LIMIT_CALLS", "1000")
 )  # calls per hour (standard key)
 FEC_RATE_LIMIT_PERIOD: int = int(
     os.getenv("FEC_RATE_LIMIT_PERIOD", "3600")
 )  # seconds (1 hour)
+
+# Add minute-based rate limit
+FEC_RATE_LIMIT_CALLS_PER_MINUTE = int(
+    os.getenv("FEC_RATE_LIMIT_CALLS_PER_MINUTE", "60")
+)  # calls per minute
+FEC_RATE_LIMIT_PERIOD_MINUTE = int(
+    os.getenv("FEC_RATE_LIMIT_PERIOD_MINUTE", "60")
+)  # seconds (1 minute)
+
 FEC_RESULTS_PER_PAGE: int = int(
     os.getenv("FEC_RESULTS_PER_PAGE", "100")
 )  # max allowed by FEC
