@@ -247,17 +247,26 @@ class FECClient:
                 f"Filtering contributions with min_contribution_receipt_date >= "
                 f"{params['min_contribution_receipt_date']}"
             )
-        all_results = []
+        all_results: List[Dict[str, Any]] = []
         page = 1
 
         while True:
             params["page"] = page
 
-            logger.info(f"Fetching page {page} of contributions...")
+            # Enhanced progress logging
+            logger.info(
+                f"Fetching page {page}: "
+                f"{len(all_results):,} records fetched so far "
+                f"(target: {max_results:,} max)"
+                if max_results
+                else f"Fetching page {page}: {len(all_results):,} records fetched so far"
+            )
+
             response = self._make_request("/schedules/schedule_a/", params)
 
             results = response.get("results", [])
             if not results:
+                logger.info("No more results available")
                 break
 
             all_results.extend(results)
@@ -265,12 +274,27 @@ class FECClient:
             # Check if we've hit max_results
             if max_results and len(all_results) >= max_results:
                 all_results = all_results[:max_results]
+                logger.info(f"Reached max_results limit: {len(all_results):,} records")
                 break
 
             # Check if there are more pages
             pagination = response.get("pagination", {})
-            if page >= pagination.get("pages", 1):
+            total_pages = pagination.get("pages", 1)
+
+            if page >= total_pages:
+                logger.info(f"Reached last page ({page} of {total_pages})")
                 break
+
+            # Log progress every 50 pages
+            if page % 50 == 0:
+                estimated_remaining = (
+                    max_results - len(all_results) if max_results else "unknown"
+                )
+                logger.info(
+                    f"Progress: Page {page}/{total_pages if max_results else '?'}, "
+                    f"{len(all_results):,} records fetched, "
+                    f"~{estimated_remaining} remaining"
+                )
 
             page += 1
 

@@ -322,6 +322,7 @@ class FECExtractionService:
                 )
 
             # Update contributions list to only process new ones
+            original_contributions = contributions
             original_count = len(contributions)
             contributions = new_contributions
 
@@ -330,7 +331,7 @@ class FECExtractionService:
             file_metadata = {
                 "contributor_state": contributor_state,
                 "two_year_transaction_period": two_year_transaction_period,
-                "record_count": len(contributions),
+                "record_count": original_count,
                 "extraction_type": "incremental",
                 "min_date": last_processed_date.isoformat()
                 if last_processed_date
@@ -338,7 +339,7 @@ class FECExtractionService:
             }
 
             raw_filing = self._create_raw_filing(
-                contributions=contributions,
+                contributions=original_contributions,
                 source=source,
                 file_hash=file_hash,
                 file_metadata=file_metadata,
@@ -353,14 +354,41 @@ class FECExtractionService:
 
             logger.info(f"Stored raw filing with id={filing_id}")
 
-            # Step 7: Store individual contributions in staging
-            stored_count = self._store_contributions_staging(
-                session=session,
-                raw_filing_id=filing_id,
-                contributions=contributions,
-            )
+            # Step 7: Store individual contributions in staging with batching
+            from fund_lens_etl.config import FEC_BATCH_SIZE
 
-            logger.info(f"Stored {stored_count} contributions in staging table")
+            stored_count = 0
+            total_to_store = len(contributions)
+
+            for i in range(0, total_to_store, FEC_BATCH_SIZE):
+                batch = contributions[i : i + FEC_BATCH_SIZE]
+                batch_num = (i // FEC_BATCH_SIZE) + 1
+                total_batches = (total_to_store + FEC_BATCH_SIZE - 1) // FEC_BATCH_SIZE
+
+                logger.info(
+                    f"Processing batch {batch_num}/{total_batches}: "
+                    f"{len(batch)} contributions (records {i + 1}-{min(i + FEC_BATCH_SIZE, total_to_store)})"
+                )
+
+                batch_stored = self._store_contributions_staging(
+                    session=session,
+                    raw_filing_id=filing_id,
+                    contributions=batch,
+                )
+
+                stored_count += batch_stored
+
+                # Commit each batch
+                session.commit()
+                logger.info(
+                    f"Batch {batch_num}/{total_batches} committed: "
+                    f"{batch_stored} contributions stored "
+                    f"(total so far: {stored_count}/{total_to_store})"
+                )
+
+            logger.info(
+                f"All batches complete: {stored_count} total contributions stored"
+            )
 
             # Step 8: Determine the new last processed date (max date from this batch)
             new_last_processed_date = None
@@ -390,6 +418,7 @@ class FECExtractionService:
 
             # Commit the transaction
             session.commit()
+            logger.info("Metadata and raw filing committed")
 
             logger.info(
                 f"Successfully extracted and stored {stored_count} contributions "
