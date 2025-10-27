@@ -23,6 +23,7 @@ class FECRateLimitError(FECAPIError):
     pass
 
 
+# noinspection PyMethodMayBeStatic
 class FECClient:
     """
     Enterprise-grade FEC API client with rate limiting and retries.
@@ -34,50 +35,93 @@ class FECClient:
     - Request logging
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.base_url = config.FEC_API_BASE_URL
         self.api_key = config.FEC_API_KEY
         self.timeout = config.FEC_API_TIMEOUT
         self.max_retries = config.FEC_MAX_RETRIES
+
+        # Hourly rate limit
         self.rate_limit_calls = config.FEC_RATE_LIMIT_CALLS
         self.rate_limit_period = config.FEC_RATE_LIMIT_PERIOD
+
+        # Minute rate limit
+        self.rate_limit_calls_per_minute = config.FEC_RATE_LIMIT_CALLS_PER_MINUTE
+        self.rate_limit_period_minute = config.FEC_RATE_LIMIT_PERIOD_MINUTE
+
         self.results_per_page = config.FEC_RESULTS_PER_PAGE
         self.backoff_factor = config.FEC_RETRY_BACKOFF_FACTOR
         self.retry_statuses = config.FEC_RETRY_STATUSES
 
-        # Rate limiting state
-        self._call_times = []
+        self._call_times: List[datetime] = []  # Add type hint
+        self._call_times_minute: List[datetime] = []  # Add type hint
 
     def _check_rate_limit(self) -> None:
         """
-        Check if we're within rate limits. Sleep if necessary.
-
-        Uses a sliding window to track calls per hour.
+        Check both hourly and per-minute rate limits before making a request.
+        Sleeps if either limit is exceeded.
         """
-        now = datetime.now()
-        cutoff = now - timedelta(seconds=self.rate_limit_period)
+        current_time = datetime.now()
 
-        # Remove calls outside the rate limit window
-        self._call_times = [t for t in self._call_times if t > cutoff]
+        # Check hourly rate limit
+        self._check_rate_limit_window(
+            current_time=current_time,
+            call_times=self._call_times,
+            limit_calls=self.rate_limit_calls,
+            limit_period=self.rate_limit_period,
+            window_name="hourly",
+        )
 
-        if len(self._call_times) >= self.rate_limit_calls:
-            # Calculate how long to wait
-            oldest_call = self._call_times[0]
-            wait_until = oldest_call + timedelta(seconds=self.rate_limit_period)
-            wait_seconds = (wait_until - now).total_seconds()
+        # Check per-minute rate limit
+        self._check_rate_limit_window(
+            current_time=current_time,
+            call_times=self._call_times_minute,
+            limit_calls=self.rate_limit_calls_per_minute,
+            limit_period=self.rate_limit_period_minute,
+            window_name="per-minute",
+        )
 
-            if wait_seconds > 0:
+        # Record the call in both tracking lists
+        self._call_times.append(current_time)
+        self._call_times_minute.append(current_time)
+
+    def _check_rate_limit_window(
+        self,
+        current_time: datetime,
+        call_times: List[datetime],
+        limit_calls: int,
+        limit_period: int,
+        window_name: str,
+    ) -> None:
+        """
+        Check rate limit for a specific time window.
+
+        Args:
+            current_time: Current timestamp
+            call_times: List of recent call timestamps for this window
+            limit_calls: Maximum calls allowed in the period
+            limit_period: Period in seconds
+            window_name: Name of the window (for logging)
+        """
+        # Remove calls outside the current window
+        cutoff_time = current_time - timedelta(seconds=limit_period)
+        while call_times and call_times[0] < cutoff_time:
+            call_times.pop(0)
+
+        # Check if we've hit the limit
+        if len(call_times) >= limit_calls:
+            # Calculate sleep time until oldest call expires
+            oldest_call = call_times[0]
+            sleep_until = oldest_call + timedelta(seconds=limit_period)
+            sleep_seconds = (sleep_until - current_time).total_seconds()
+
+            if sleep_seconds > 0:
                 logger.warning(
-                    f"Rate limit reached ({len(self._call_times)}/{self.rate_limit_calls} calls). "
-                    f"Sleeping for {wait_seconds:.2f} seconds..."
+                    f"Rate limit reached for {window_name} window "
+                    f"({len(call_times)}/{limit_calls} calls). "
+                    f"Sleeping for {sleep_seconds:.2f} seconds..."
                 )
-                time.sleep(wait_seconds + 1)  # Add 1 second buffer
-                # Clear old calls after sleeping
-                self._call_times = []
-
-    def _record_call(self) -> None:
-        """Record that an API call was made."""
-        self._call_times.append(datetime.now())
+                time.sleep(sleep_seconds)
 
     def _make_request(
         self, endpoint: str, params: Optional[Dict[str, Any]] = None
@@ -111,10 +155,7 @@ class FECClient:
                 logger.debug(f"API request (attempt {attempt + 1}): {endpoint}")
                 response = requests.get(url, params=params, timeout=self.timeout)
 
-                # Record the call for rate limiting
-                self._record_call()
-
-                time.sleep(0.5)
+                time.sleep(4.0)
 
                 # Handle rate limit responses
                 if response.status_code == 429:
@@ -199,14 +240,13 @@ class FECClient:
             "sort": "-contribution_receipt_date",  # Newest first
         }
 
-        # Add date filter if provided
         if min_date:
-            # Format date as YYYY-MM-DD for FEC API
-            params["min_date"] = min_date.strftime("%Y-%m-%d")
+            # FEC API uses min_contribution_receipt_date parameter
+            params["min_contribution_receipt_date"] = min_date.strftime("%Y-%m-%d")
             logger.info(
-                f"Filtering contributions with min_date >= {params['min_date']}"
+                f"Filtering contributions with min_contribution_receipt_date >= "
+                f"{params['min_contribution_receipt_date']}"
             )
-
         all_results = []
         page = 1
 

@@ -29,9 +29,10 @@ async def deploy():
         parameters={
             "state": "MD",
             "two_year_transaction_period": 2026,  # Changed from 2024 to 2026
-            "max_results": 50000  # Set reasonable daily limit to avoid rate limits
+            "max_results": 90000  # Set reasonable daily limit to avoid rate limits
         },
-        cron="0 2 * * *",  # Run daily at 2 AM EST
+        # cron="0 2 * * *",  # Run daily at 2 AM EST
+        cron=None,
         work_pool_name="default",
     )
 
@@ -39,7 +40,7 @@ async def deploy():
     print("   Schedule: Daily at 2 AM EST")
     print("   State: MD, Cycle: 2026 (active cycle)")
     print("   Mode: Incremental extraction (date-based)")
-    print("   Max per run: 50,000 records")
+    print("   Max per run: 90,000 records (~900 API calls)")
     print(f"   Code location: {project_root}")
 
 
