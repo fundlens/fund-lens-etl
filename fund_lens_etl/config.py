@@ -47,6 +47,9 @@ FEC_RETRY_BACKOFF_FACTOR: float = float(
 )  # exponential backoff: 1s, 2s, 4s
 FEC_RETRY_STATUSES = [429, 500, 502, 503, 504]  # HTTP status codes to retry
 
+# Batch processing configuration
+FEC_BATCH_SIZE = int(os.getenv("FEC_BATCH_SIZE", "10000"))  # Commit every 10k records
+
 
 def get_database_url() -> str:
     """
