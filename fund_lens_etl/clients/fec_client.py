@@ -2,8 +2,9 @@
 
 import time
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from datetime import datetime, timedelta
+
 import requests
 
 from fund_lens_etl import config
@@ -219,9 +220,11 @@ class FECClient:
         self,
         contributor_state: str,
         two_year_transaction_period: int,
-        min_date: Optional[datetime] = None,  # Add this parameter
-        max_results: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        min_date: datetime | None = None,
+        max_results: int | None = None,
+        batch_callback: Callable[[list[dict[str, Any]]], None] | None = None,
+        batch_size: int = 1000,
+    ) -> list[dict[str, Any]]:
         """
         Get individual contributions by state and election cycle.
 
@@ -230,36 +233,37 @@ class FECClient:
             two_year_transaction_period: Election cycle (e.g., 2024 for 2023-2024)
             min_date: Only fetch contributions on or after this date (for incremental loads)
             max_results: Maximum number of results to return (None for all)
+            batch_callback: Optional callback function called with each batch of records
+            batch_size: Number of records to accumulate before calling batch_callback
 
         Returns:
-            List of contribution records
+            List of contribution records (only if batch_callback is None, otherwise empty)
         """
         params = {
             "contributor_state": contributor_state,
             "two_year_transaction_period": two_year_transaction_period,
-            "sort": "-contribution_receipt_date",  # Newest first
+            "sort": "-contribution_receipt_date",
         }
 
         if min_date:
-            # FEC API uses min_contribution_receipt_date parameter
             params["min_contribution_receipt_date"] = min_date.strftime("%Y-%m-%d")
             logger.info(
                 f"Filtering contributions with min_contribution_receipt_date >= "
                 f"{params['min_contribution_receipt_date']}"
             )
-        all_results: List[Dict[str, Any]] = []
+
+        all_results: list[dict[str, Any]] = []
+        batch_buffer: list[dict[str, Any]] = []
         page = 1
+        total_processed = 0
 
         while True:
             params["page"] = page
 
-            # Enhanced progress logging
             logger.info(
                 f"Fetching page {page}: "
-                f"{len(all_results):,} records fetched so far "
-                f"(target: {max_results:,} max)"
-                if max_results
-                else f"Fetching page {page}: {len(all_results):,} records fetched so far"
+                f"{total_processed:,} records processed so far "
+                + (f"(target: {max_results:,} max)" if max_results else "")
             )
 
             response = self._make_request("/schedules/schedule_a/", params)
@@ -269,12 +273,33 @@ class FECClient:
                 logger.info("No more results available")
                 break
 
-            all_results.extend(results)
+            # Add to appropriate buffer
+            if batch_callback:
+                batch_buffer.extend(results)
+                total_processed += len(results)
+
+                # When buffer reaches batch_size, process it
+                if len(batch_buffer) >= batch_size:
+                    logger.info(
+                        f"Batch ready: {len(batch_buffer)} records, invoking callback"
+                    )
+                    batch_callback(batch_buffer)
+                    batch_buffer = []
+            else:
+                all_results.extend(results)
+                total_processed += len(results)
 
             # Check if we've hit max_results
-            if max_results and len(all_results) >= max_results:
-                all_results = all_results[:max_results]
-                logger.info(f"Reached max_results limit: {len(all_results):,} records")
+            if max_results and total_processed >= max_results:
+                if batch_callback and batch_buffer:
+                    # Process remaining buffer
+                    logger.info(
+                        f"Final batch: {len(batch_buffer)} records, invoking callback"
+                    )
+                    batch_callback(batch_buffer)
+                elif not batch_callback:
+                    all_results = all_results[:max_results]
+                logger.info(f"Reached max_results limit: {total_processed:,} records")
                 break
 
             # Check if there are more pages
@@ -287,16 +312,18 @@ class FECClient:
 
             # Log progress every 50 pages
             if page % 50 == 0:
-                estimated_remaining = (
-                    max_results - len(all_results) if max_results else "unknown"
-                )
                 logger.info(
-                    f"Progress: Page {page}/{total_pages if max_results else '?'}, "
-                    f"{len(all_results):,} records fetched, "
-                    f"~{estimated_remaining} remaining"
+                    f"Progress: Page {page}, {total_processed:,} records processed"
                 )
 
             page += 1
 
-        logger.info(f"Fetched {len(all_results)} total contributions")
-        return all_results
+        # Process any remaining records in buffer
+        if batch_callback and batch_buffer:
+            logger.info(f"Final batch: {len(batch_buffer)} records, invoking callback")
+            batch_callback(batch_buffer)
+
+        logger.info(
+            f"Completed: {len(all_results) if not batch_callback else total_processed} total contributions"
+        )
+        return all_results if not batch_callback else []
