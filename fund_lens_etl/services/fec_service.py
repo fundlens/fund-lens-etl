@@ -3,7 +3,9 @@
 import logging
 import hashlib
 import json
+from datetime import datetime
 from typing import List, Dict, Any, Optional
+
 from sqlalchemy.orm import Session
 
 from fund_lens_etl.clients import FECClient
@@ -370,15 +372,29 @@ class FECExtractionService:
                 f"Fetch-and-store complete: {total_fetched:,} fetched, {total_stored:,} stored"
             )
 
-            # Step 3: Determine new last processed date
+            # Step 3: Determine new last processed date (capped at today)
             new_last_processed_date = None
             if all_contribution_dates:
                 from dateutil import parser
+                from datetime import timezone
 
                 parsed_dates = [parser.parse(d) for d in all_contribution_dates if d]
                 if parsed_dates:
-                    new_last_processed_date = max(parsed_dates)
-                    logger.info(f"New last processed date: {new_last_processed_date}")
+                    max_date = max(parsed_dates)
+                    today = datetime.now(timezone.utc)
+
+                    # Cap at today to avoid future dates from bad data
+                    new_last_processed_date = min(max_date, today)
+
+                    if max_date > today:
+                        logger.warning(
+                            f"Found future-dated contributions (max: {max_date.date()}). "
+                            f"Capping last_processed_date at today: {today.date()}"
+                        )
+                    else:
+                        logger.info(
+                            f"New last processed date: {new_last_processed_date}"
+                        )
 
             # Step 4: Update metadata
             self.metadata_repo.upsert_metadata(
@@ -408,6 +424,187 @@ class FECExtractionService:
         except Exception as e:
             session.rollback()
             logger.error(f"Extraction failed: {e}")
+            raise
+
+    def backfill_contributions(
+        self,
+        session: Session,
+        contributor_state: str,
+        two_year_transaction_period: int,
+        start_date: datetime,
+        end_date: datetime,
+        source: str = "fec_api",
+        max_results: int | None = None,
+    ) -> dict[str, Any]:
+        """
+        Backfill historical FEC contributions for a specific date range.
+
+        Fetches contributions from oldest to newest (ascending order) to fill gaps
+        in historical data.
+
+        Args:
+            session: Database session
+            contributor_state: Two-letter state code (e.g., "MD")
+            two_year_transaction_period: Election cycle (e.g., 2026 for 2025-2026)
+            start_date: Earliest contribution date to fetch
+            end_date: Latest contribution date to fetch
+            source: Data source identifier (default: "fec_api")
+            max_results: Maximum number of contributions to fetch (None for all)
+
+        Returns:
+            Dictionary with backfill statistics
+        """
+        logger.info(
+            f"Starting backfill: state={contributor_state}, "
+            f"cycle={two_year_transaction_period}, "
+            f"date_range={start_date.date()} to {end_date.date()}, "
+            f"max_results={max_results or 'ALL'}"
+        )
+
+        try:
+            # Tracking variables for batch processing
+            total_fetched = 0
+            total_stored = 0
+            all_contribution_dates = []
+            current_raw_filing_id: int | None = None
+
+            # Define batch processing callback (same as incremental)
+            def process_batch(batch_contributions: list[dict[str, Any]]) -> None:
+                """
+                Define batch processing callback (same as incremental)
+                """
+                nonlocal \
+                    total_fetched, \
+                    total_stored, \
+                    all_contribution_dates, \
+                    current_raw_filing_id
+
+                total_fetched += len(batch_contributions)
+                logger.info(
+                    f"Processing backfill batch: {len(batch_contributions)} contributions (total fetched: "
+                    f"{total_fetched:,})"
+                )
+
+                # Calculate file hash for this batch
+                file_hash = self._calculate_file_hash(batch_contributions)
+
+                # Check for file-level deduplication
+                existing_filing = self.raw_filing_repo.get_by_file_hash(
+                    session, file_hash
+                )
+                if existing_filing:
+                    logger.info(
+                        f"Batch already processed (raw_filing_id={existing_filing.id}). Skipping batch."
+                    )
+                    return
+
+                # Record-level deduplication
+                batch_sub_ids = [
+                    c["sub_id"]
+                    for c in batch_contributions
+                    if c.get("sub_id") is not None
+                ]
+                existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
+                    session, batch_sub_ids
+                )
+
+                new_contributions = [
+                    c
+                    for c in batch_contributions
+                    if c.get("sub_id") is not None
+                    and c["sub_id"] not in existing_sub_ids
+                ]
+
+                duplicate_count = len(batch_contributions) - len(new_contributions)
+                if duplicate_count > 0:
+                    logger.info(
+                        f"Batch has {duplicate_count} duplicates. Storing {len(new_contributions)} new contributions."
+                    )
+
+                if not new_contributions:
+                    logger.info(
+                        "No new contributions in this batch after deduplication"
+                    )
+                    return
+
+                # Store raw filing for this batch
+                file_metadata = {
+                    "contributor_state": contributor_state,
+                    "two_year_transaction_period": two_year_transaction_period,
+                    "record_count": len(batch_contributions),
+                    "extraction_type": "backfill_batch",
+                    "start_date": start_date.isoformat(),
+                    "end_date": end_date.isoformat(),
+                }
+
+                raw_filing = self._create_raw_filing(
+                    contributions=batch_contributions,
+                    source=source,
+                    file_hash=file_hash,
+                    file_metadata=file_metadata,
+                )
+                session.add(raw_filing)
+                session.flush()
+
+                assert raw_filing.id is not None
+                filing_id: int = raw_filing.id
+                current_raw_filing_id = filing_id
+
+                # Store contributions in staging
+                stored_count = self._store_contributions_staging(
+                    session=session,
+                    raw_filing_id=filing_id,
+                    contributions=new_contributions,
+                )
+
+                total_stored += stored_count
+
+                # Commit this batch
+                session.commit()
+                logger.info(
+                    f"Backfill batch committed: {stored_count} contributions stored "
+                    f"(total stored: {total_stored:,}/{total_fetched:,})"
+                )
+
+                # Track contribution dates
+                batch_dates = [
+                    c.get("contribution_receipt_date")
+                    for c in batch_contributions
+                    if c.get("contribution_receipt_date")
+                ]
+                all_contribution_dates.extend(batch_dates)
+
+            # Fetch contributions with backfill parameters (oldest first)
+            logger.info(
+                "Starting backfill fetch-and-store process (oldest to newest)..."
+            )
+            self.fec_client.get_contributions(
+                contributor_state=contributor_state,
+                two_year_transaction_period=two_year_transaction_period,
+                min_date=start_date,
+                max_date=end_date,
+                max_results=max_results,
+                batch_callback=process_batch,
+                batch_size=1000,
+                sort_order="asc",  # OLDEST FIRST for backfill
+            )
+
+            logger.info(
+                f"Backfill complete: {total_fetched:,} fetched, {total_stored:,} stored"
+            )
+
+            return {
+                "contributions_fetched": total_fetched,
+                "raw_filing_id": current_raw_filing_id,
+                "contributions_stored": total_stored,
+                "file_hash": "multiple_batches",
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+            }
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Backfill failed: {e}")
             raise
 
     def _calculate_file_hash(self, contributions: List[Dict[str, Any]]) -> str:

@@ -221,9 +221,11 @@ class FECClient:
         contributor_state: str,
         two_year_transaction_period: int,
         min_date: datetime | None = None,
+        max_date: datetime | None = None,  # NEW: for backfilling
         max_results: int | None = None,
         batch_callback: Callable[[list[dict[str, Any]]], None] | None = None,
         batch_size: int = 1000,
+        sort_order: str = "desc",  # NEW: 'desc' (newest first) or 'asc' (oldest first)
     ) -> list[dict[str, Any]]:
         """
         Get individual contributions by state and election cycle.
@@ -231,18 +233,27 @@ class FECClient:
         Args:
             contributor_state: Two-letter state code
             two_year_transaction_period: Election cycle (e.g., 2024 for 2023-2024)
-            min_date: Only fetch contributions on or after this date (for incremental loads)
+            min_date: Only fetch contributions on or after this date
+            max_date: Only fetch contributions on or before this date (for backfilling)
             max_results: Maximum number of results to return (None for all)
             batch_callback: Optional callback function called with each batch of records
             batch_size: Number of records to accumulate before calling batch_callback
+            sort_order: 'desc' for newest first (incremental), 'asc' for oldest first (backfill)
 
         Returns:
             List of contribution records (only if batch_callback is None, otherwise empty)
         """
+        # Determine sort parameter based on order
+        sort_param = (
+            "-contribution_receipt_date"
+            if sort_order == "desc"
+            else "contribution_receipt_date"
+        )
+
         params = {
             "contributor_state": contributor_state,
             "two_year_transaction_period": two_year_transaction_period,
-            "sort": "-contribution_receipt_date",
+            "sort": sort_param,
         }
 
         if min_date:
@@ -250,6 +261,13 @@ class FECClient:
             logger.info(
                 f"Filtering contributions with min_contribution_receipt_date >= "
                 f"{params['min_contribution_receipt_date']}"
+            )
+
+        if max_date:
+            params["max_contribution_receipt_date"] = max_date.strftime("%Y-%m-%d")
+            logger.info(
+                f"Filtering contributions with max_contribution_receipt_date <= "
+                f"{params['max_contribution_receipt_date']}"
             )
 
         all_results: list[dict[str, Any]] = []
@@ -261,10 +279,12 @@ class FECClient:
             params["page"] = page
 
             logger.info(
-                f"Fetching page {page}: "
+                f"Fetching page {page} ({sort_order}): "
                 f"{total_processed:,} records processed so far "
                 + (f"(target: {max_results:,} max)" if max_results else "")
             )
+
+            # ... rest of the method stays the same
 
             response = self._make_request("/schedules/schedule_a/", params)
 
