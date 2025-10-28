@@ -1,9 +1,9 @@
 """Repository for extraction metadata operations."""
 
-from datetime import datetime, UTC
-from typing import Optional
-from sqlalchemy.orm import Session
+from datetime import UTC, datetime
+
 from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from fund_lens_etl.models.extraction_metadata import ExtractionMetadata
 
@@ -14,7 +14,7 @@ class ExtractionMetadataRepo:
 
     def get_metadata(
         self, session: Session, source: str, entity_type: str, state: str, cycle: int
-    ) -> Optional[ExtractionMetadata]:
+    ) -> ExtractionMetadata | None:
         """
         Get metadata for a specific extraction configuration.
 
@@ -45,7 +45,7 @@ class ExtractionMetadataRepo:
         entity_type: str,
         state: str,
         cycle: int,
-        last_processed_date: Optional[datetime],
+        last_processed_date: datetime | None,
         records_extracted: int,
         status: str = "active",
     ) -> ExtractionMetadata:
@@ -94,7 +94,7 @@ class ExtractionMetadataRepo:
 
     def get_last_processed_date(
         self, session: Session, source: str, entity_type: str, state: str, cycle: int
-    ) -> Optional[datetime]:
+    ) -> datetime | None:
         """
         Get the last processed date for an extraction configuration.
 

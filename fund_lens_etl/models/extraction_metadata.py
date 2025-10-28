@@ -1,10 +1,10 @@
 """Extraction metadata model for tracking incremental loads."""
 
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import Integer, String, DateTime, UniqueConstraint, Index
-from sqlalchemy.sql import func
+
+from sqlalchemy import DateTime, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
 
 from fund_lens_etl.database import Base
 
@@ -26,13 +26,11 @@ class ExtractionMetadata(Base):
     entity_type: Mapped[str] = mapped_column(
         String(50), nullable=False, comment="Type of entity (e.g., contributions)"
     )
-    state: Mapped[str] = mapped_column(
-        String(2), nullable=False, comment="State code (e.g., MD)"
-    )
+    state: Mapped[str] = mapped_column(String(2), nullable=False, comment="State code (e.g., MD)")
     cycle: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="Two-year transaction period (e.g., 2026)"
     )
-    last_processed_date: Mapped[Optional[datetime]] = mapped_column(
+    last_processed_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
         comment="Latest contribution date processed",

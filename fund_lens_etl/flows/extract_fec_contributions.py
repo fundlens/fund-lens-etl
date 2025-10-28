@@ -16,19 +16,20 @@ Usage:
 """
 
 from datetime import datetime
-from typing import Optional
 
-from prefect import flow, task, get_run_logger
+from prefect import flow, get_run_logger, task
 from prefect.cache_policies import NONE
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from fund_lens_etl.clients.fec_client import FECClient
-from fund_lens_etl.repos import RawFilingRepo
-from fund_lens_etl.repos import FECContributionStagingRepo
-from fund_lens_etl.repos import ExtractionMetadataRepo
-from fund_lens_etl.services import FECExtractionService
 from fund_lens_etl.config import get_database_url
+from fund_lens_etl.repos import (
+    ExtractionMetadataRepo,
+    FECContributionStagingRepo,
+    RawFilingRepo,
+)
+from fund_lens_etl.services import FECExtractionService
 
 
 @task(
@@ -87,7 +88,7 @@ def extract_state_contributions(
     fec_service: FECExtractionService,
     state: str,
     two_year_transaction_period: int,
-    max_results: Optional[int] = None,
+    max_results: int | None = None,
 ) -> dict:
     """
     Extract FEC contributions for a specific state and election cycle using incremental extraction.
@@ -182,7 +183,7 @@ def cleanup_resources(session: Session) -> None:
 def extract_fec_contributions_flow(
     state: str = "MD",
     two_year_transaction_period: int = 2024,
-    max_results: Optional[int] = None,
+    max_results: int | None = None,
 ) -> dict:
     """
     Main flow to extract FEC contributions to Bronze layer.

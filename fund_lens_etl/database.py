@@ -3,7 +3,8 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from fund_lens_etl.config import DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME
+
+from fund_lens_etl.config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 

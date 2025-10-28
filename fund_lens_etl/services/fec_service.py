@@ -1,19 +1,20 @@
 """FEC extraction service - orchestrates client and repository operations."""
 
-import logging
 import hashlib
 import json
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+import logging
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.orm import Session
 
 from fund_lens_etl.clients import FECClient
-from fund_lens_etl.repos import RawFilingRepo
-from fund_lens_etl.repos import FECContributionStagingRepo
-from fund_lens_etl.repos import ExtractionMetadataRepo
-from fund_lens_etl.models import RawFiling
-from fund_lens_etl.models import FECContributionStaging
+from fund_lens_etl.models import FECContributionStaging, RawFiling
+from fund_lens_etl.repos import (
+    ExtractionMetadataRepo,
+    FECContributionStagingRepo,
+    RawFilingRepo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ class FECExtractionService:
         contributor_state: str,
         two_year_transaction_period: int,
         source: str = "fec_api",
-        max_results: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        max_results: int | None = None,
+    ) -> dict[str, Any]:
         """
         Extract contributions from FEC API and store in database.
 
@@ -100,12 +101,8 @@ class FECExtractionService:
                 }
 
             # Step 3b: Record-level deduplication (filter out existing sub_ids)
-            all_sub_ids = [
-                c["sub_id"] for c in contributions if c.get("sub_id") is not None
-            ]
-            existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
-                session, all_sub_ids
-            )
+            all_sub_ids = [c["sub_id"] for c in contributions if c.get("sub_id") is not None]
+            existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(session, all_sub_ids)
 
             logger.info(f"DEBUG: Total contributions fetched: {len(contributions)}")
             logger.info(f"DEBUG: Sub_ids to check: {len(all_sub_ids)}")
@@ -135,12 +132,8 @@ class FECExtractionService:
             logger.info(
                 f"DEBUG: Are all fetched sub_ids in existing? {set(all_sub_ids).issubset(existing_sub_ids)}"
             )
-            logger.info(
-                f"DEBUG: Total unique sub_ids in DB check: {len(set(all_sub_ids))}"
-            )
-            logger.info(
-                f"DEBUG: New contributions after filter: {len(new_contributions)}"
-            )
+            logger.info(f"DEBUG: Total unique sub_ids in DB check: {len(set(all_sub_ids))}")
+            logger.info(f"DEBUG: New contributions after filter: {len(new_contributions)}")
 
             duplicate_count = len(contributions) - len(new_contributions)
             if duplicate_count > 0:
@@ -256,11 +249,7 @@ class FECExtractionService:
                 """
                 Define batch processing callback
                 """
-                nonlocal \
-                    total_fetched, \
-                    total_stored, \
-                    all_contribution_dates, \
-                    current_raw_filing_id
+                nonlocal total_fetched, total_stored, all_contribution_dates, current_raw_filing_id
 
                 total_fetched += len(batch_contributions)
                 logger.info(
@@ -271,9 +260,7 @@ class FECExtractionService:
                 file_hash = self._calculate_file_hash(batch_contributions)
 
                 # Check for file-level deduplication
-                existing_filing = self.raw_filing_repo.get_by_file_hash(
-                    session, file_hash
-                )
+                existing_filing = self.raw_filing_repo.get_by_file_hash(session, file_hash)
                 if existing_filing:
                     logger.info(
                         f"Batch already processed (raw_filing_id={existing_filing.id}). Skipping batch."
@@ -282,9 +269,7 @@ class FECExtractionService:
 
                 # Record-level deduplication
                 batch_sub_ids = [
-                    c["sub_id"]
-                    for c in batch_contributions
-                    if c.get("sub_id") is not None
+                    c["sub_id"] for c in batch_contributions if c.get("sub_id") is not None
                 ]
                 existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
                     session, batch_sub_ids
@@ -293,8 +278,7 @@ class FECExtractionService:
                 new_contributions = [
                     c
                     for c in batch_contributions
-                    if c.get("sub_id") is not None
-                    and c["sub_id"] not in existing_sub_ids
+                    if c.get("sub_id") is not None and c["sub_id"] not in existing_sub_ids
                 ]
 
                 duplicate_count = len(batch_contributions) - len(new_contributions)
@@ -304,9 +288,7 @@ class FECExtractionService:
                     )
 
                 if not new_contributions:
-                    logger.info(
-                        "No new contributions in this batch after deduplication"
-                    )
+                    logger.info("No new contributions in this batch after deduplication")
                     return
 
                 # Store raw filing for this batch
@@ -315,9 +297,7 @@ class FECExtractionService:
                     "two_year_transaction_period": two_year_transaction_period,
                     "record_count": len(batch_contributions),
                     "extraction_type": "incremental_batch",
-                    "min_date": last_processed_date.isoformat()
-                    if last_processed_date
-                    else None,
+                    "min_date": (last_processed_date.isoformat() if last_processed_date else None),
                 }
 
                 raw_filing = self._create_raw_filing(
@@ -376,12 +356,11 @@ class FECExtractionService:
             new_last_processed_date = None
             if all_contribution_dates:
                 from dateutil import parser
-                from datetime import timezone
 
                 parsed_dates = [parser.parse(d) for d in all_contribution_dates if d]
                 if parsed_dates:
                     max_date = max(parsed_dates)
-                    today = datetime.now(timezone.utc)
+                    today = datetime.now(UTC)
 
                     # Cap at today to avoid future dates from bad data
                     new_last_processed_date = min(max_date, today)
@@ -392,9 +371,7 @@ class FECExtractionService:
                             f"Capping last_processed_date at today: {today.date()}"
                         )
                     else:
-                        logger.info(
-                            f"New last processed date: {new_last_processed_date}"
-                        )
+                        logger.info(f"New last processed date: {new_last_processed_date}")
 
             # Step 4: Update metadata
             self.metadata_repo.upsert_metadata(
@@ -416,9 +393,9 @@ class FECExtractionService:
                 "raw_filing_id": current_raw_filing_id,
                 "contributions_stored": total_stored,
                 "file_hash": "multiple_batches",
-                "last_processed_date": new_last_processed_date.isoformat()
-                if new_last_processed_date
-                else None,
+                "last_processed_date": (
+                    new_last_processed_date.isoformat() if new_last_processed_date else None
+                ),
             }
 
         except Exception as e:
@@ -473,11 +450,7 @@ class FECExtractionService:
                 """
                 Define batch processing callback (same as incremental)
                 """
-                nonlocal \
-                    total_fetched, \
-                    total_stored, \
-                    all_contribution_dates, \
-                    current_raw_filing_id
+                nonlocal total_fetched, total_stored, all_contribution_dates, current_raw_filing_id
 
                 total_fetched += len(batch_contributions)
                 logger.info(
@@ -489,9 +462,7 @@ class FECExtractionService:
                 file_hash = self._calculate_file_hash(batch_contributions)
 
                 # Check for file-level deduplication
-                existing_filing = self.raw_filing_repo.get_by_file_hash(
-                    session, file_hash
-                )
+                existing_filing = self.raw_filing_repo.get_by_file_hash(session, file_hash)
                 if existing_filing:
                     logger.info(
                         f"Batch already processed (raw_filing_id={existing_filing.id}). Skipping batch."
@@ -500,9 +471,7 @@ class FECExtractionService:
 
                 # Record-level deduplication
                 batch_sub_ids = [
-                    c["sub_id"]
-                    for c in batch_contributions
-                    if c.get("sub_id") is not None
+                    c["sub_id"] for c in batch_contributions if c.get("sub_id") is not None
                 ]
                 existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
                     session, batch_sub_ids
@@ -511,8 +480,7 @@ class FECExtractionService:
                 new_contributions = [
                     c
                     for c in batch_contributions
-                    if c.get("sub_id") is not None
-                    and c["sub_id"] not in existing_sub_ids
+                    if c.get("sub_id") is not None and c["sub_id"] not in existing_sub_ids
                 ]
 
                 duplicate_count = len(batch_contributions) - len(new_contributions)
@@ -522,9 +490,7 @@ class FECExtractionService:
                     )
 
                 if not new_contributions:
-                    logger.info(
-                        "No new contributions in this batch after deduplication"
-                    )
+                    logger.info("No new contributions in this batch after deduplication")
                     return
 
                 # Store raw filing for this batch
@@ -575,9 +541,7 @@ class FECExtractionService:
                 all_contribution_dates.extend(batch_dates)
 
             # Fetch contributions with backfill parameters (oldest first)
-            logger.info(
-                "Starting backfill fetch-and-store process (oldest to newest)..."
-            )
+            logger.info("Starting backfill fetch-and-store process (oldest to newest)...")
             self.fec_client.get_contributions(
                 contributor_state=contributor_state,
                 two_year_transaction_period=two_year_transaction_period,
@@ -589,9 +553,7 @@ class FECExtractionService:
                 sort_order="asc",  # OLDEST FIRST for backfill
             )
 
-            logger.info(
-                f"Backfill complete: {total_fetched:,} fetched, {total_stored:,} stored"
-            )
+            logger.info(f"Backfill complete: {total_fetched:,} fetched, {total_stored:,} stored")
 
             return {
                 "contributions_fetched": total_fetched,
@@ -607,7 +569,7 @@ class FECExtractionService:
             logger.error(f"Backfill failed: {e}")
             raise
 
-    def _calculate_file_hash(self, contributions: List[Dict[str, Any]]) -> str:
+    def _calculate_file_hash(self, contributions: list[dict[str, Any]]) -> str:
         """
         Calculate SHA-256 hash of contributions data for deduplication.
 
@@ -629,10 +591,10 @@ class FECExtractionService:
 
     def _create_raw_filing(
         self,
-        contributions: List[Dict[str, Any]],
+        contributions: list[dict[str, Any]],
         source: str,
         file_hash: str,
-        file_metadata: Dict[str, Any],
+        file_metadata: dict[str, Any],
     ) -> RawFiling:
         """
         Create a RawFiling model instance from contributions data.
@@ -661,7 +623,7 @@ class FECExtractionService:
         return raw_filing
 
     def _store_contributions_staging(
-        self, session: Session, raw_filing_id: int, contributions: List[Dict[str, Any]]
+        self, session: Session, raw_filing_id: int, contributions: list[dict[str, Any]]
     ) -> int:
         """
         Store individual contributions in staging table.
@@ -687,7 +649,7 @@ class FECExtractionService:
         return stored_count
 
     def _map_contribution_to_staging(
-        self, raw_filing_id: int, contribution: Dict[str, Any]
+        self, raw_filing_id: int, contribution: dict[str, Any]
     ) -> FECContributionStaging:
         """
         Map FEC API contribution dictionary to staging model.

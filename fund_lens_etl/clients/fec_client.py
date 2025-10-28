@@ -1,9 +1,10 @@
 """FEC API Client with rate limiting and retry logic."""
 
-import time
 import logging
-from typing import Dict, List, Any, Optional, Callable
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Any
 
 import requests
 
@@ -54,8 +55,8 @@ class FECClient:
         self.backoff_factor = config.FEC_RETRY_BACKOFF_FACTOR
         self.retry_statuses = config.FEC_RETRY_STATUSES
 
-        self._call_times: List[datetime] = []  # Add type hint
-        self._call_times_minute: List[datetime] = []  # Add type hint
+        self._call_times: list[datetime] = []  # Add type hint
+        self._call_times_minute: list[datetime] = []  # Add type hint
 
     def _check_rate_limit(self) -> None:
         """
@@ -89,7 +90,7 @@ class FECClient:
     def _check_rate_limit_window(
         self,
         current_time: datetime,
-        call_times: List[datetime],
+        call_times: list[datetime],
         limit_calls: int,
         limit_period: int,
         window_name: str,
@@ -124,9 +125,7 @@ class FECClient:
                 )
                 time.sleep(sleep_seconds)
 
-    def _make_request(
-        self, endpoint: str, params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+    def _make_request(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
         Make a single API request with retries.
 
@@ -162,9 +161,7 @@ class FECClient:
                 if response.status_code == 429:
                     if attempt < self.max_retries:
                         wait_time = self.backoff_factor**attempt
-                        logger.warning(
-                            f"Rate limited by API. Waiting {wait_time}s before retry..."
-                        )
+                        logger.warning(f"Rate limited by API. Waiting {wait_time}s before retry...")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -191,28 +188,32 @@ class FECClient:
             except requests.exceptions.Timeout:
                 if attempt < self.max_retries:
                     wait_time = self.backoff_factor**attempt
-                    logger.warning(
-                        f"Request timeout. Waiting {wait_time}s before retry..."
-                    )
+
+                    logger.warning(f"Request timeout. Waiting {wait_time}s before retry...")
+
                     time.sleep(wait_time)
+
                     continue
+
                 else:
                     raise FECAPIError(
                         f"Request timeout after {self.max_retries + 1} attempts"
-                    )
+                    ) from None  # Add 'from None' to suppress original exception
 
             except requests.exceptions.RequestException as e:
                 if attempt < self.max_retries:
                     wait_time = self.backoff_factor**attempt
-                    logger.warning(
-                        f"Request failed: {e}. Waiting {wait_time}s before retry..."
-                    )
+
+                    logger.warning(f"Request failed: {e}. Waiting {wait_time}s before retry...")
+
                     time.sleep(wait_time)
+
                     continue
+
                 else:
                     raise FECAPIError(
                         f"Request failed after {self.max_retries + 1} attempts: {e}"
-                    )
+                    ) from e  # Add 'from e' to chain the exception
 
         raise FECAPIError("Unexpected error in retry loop")
 
@@ -245,9 +246,7 @@ class FECClient:
         """
         # Determine sort parameter based on order
         sort_param = (
-            "-contribution_receipt_date"
-            if sort_order == "desc"
-            else "contribution_receipt_date"
+            "-contribution_receipt_date" if sort_order == "desc" else "contribution_receipt_date"
         )
 
         params = {
@@ -300,9 +299,7 @@ class FECClient:
 
                 # When buffer reaches batch_size, process it
                 if len(batch_buffer) >= batch_size:
-                    logger.info(
-                        f"Batch ready: {len(batch_buffer)} records, invoking callback"
-                    )
+                    logger.info(f"Batch ready: {len(batch_buffer)} records, invoking callback")
                     batch_callback(batch_buffer)
                     batch_buffer = []
             else:
@@ -313,9 +310,7 @@ class FECClient:
             if max_results and total_processed >= max_results:
                 if batch_callback and batch_buffer:
                     # Process remaining buffer
-                    logger.info(
-                        f"Final batch: {len(batch_buffer)} records, invoking callback"
-                    )
+                    logger.info(f"Final batch: {len(batch_buffer)} records, invoking callback")
                     batch_callback(batch_buffer)
                 elif not batch_callback:
                     all_results = all_results[:max_results]
@@ -332,9 +327,7 @@ class FECClient:
 
             # Log progress every 50 pages
             if page % 50 == 0:
-                logger.info(
-                    f"Progress: Page {page}, {total_processed:,} records processed"
-                )
+                logger.info(f"Progress: Page {page}, {total_processed:,} records processed")
 
             page += 1
 
