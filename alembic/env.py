@@ -1,12 +1,11 @@
 """Alembic env module"""
+
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
-
-from fund_lens_etl.database import Base, DATABASE_URL
+from fund_lens_etl.database import DATABASE_URL, Base
 from fund_lens_etl.models import RawFiling  # noqa: F401
 
 # this is the Alembic Config object, which provides
@@ -51,9 +50,7 @@ def run_migrations_online() -> None:
     connectable = engine_from_config(configuration, poolclass=pool.NullPool)
 
     with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
-        )
+        context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():
             context.run_migrations()

@@ -1,7 +1,7 @@
 """Repository for fec_contributions_staging table operations."""
 
 import logging
-from typing import Optional, List, Set
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -50,7 +50,7 @@ class FECContributionStagingRepo:
 
     def get_by_raw_filing_id(
         self, session: Session, raw_filing_id: int
-    ) -> List[FECContributionStaging]:
+    ) -> list[FECContributionStaging]:
         """
         Get all staging contributions from a specific raw filing.
 
@@ -70,8 +70,8 @@ class FECContributionStagingRepo:
         return list(session.execute(stmt).scalars().all())
 
     def get_unstandardized(
-        self, session: Session, limit: Optional[int] = None
-    ) -> List[FECContributionStaging]:
+        self, session: Session, limit: int | None = None
+    ) -> list[FECContributionStaging]:
         """
         Get contributions that haven't been standardized yet.
 
@@ -96,10 +96,10 @@ class FECContributionStagingRepo:
     def get_by_date_range(
         self,
         session: Session,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        standardized: Optional[bool] = None,
-    ) -> List[FECContributionStaging]:
+        start_date: str | None = None,
+        end_date: str | None = None,
+        standardized: bool | None = None,
+    ) -> list[FECContributionStaging]:
         """
         Get contributions by transaction date range.
 
@@ -125,7 +125,7 @@ class FECContributionStagingRepo:
 
         return list(session.execute(stmt).scalars().all())
 
-    def get_existing_sub_ids(self, session: Session, sub_ids: List[str]) -> Set[str]:
+    def get_existing_sub_ids(self, session: Session, sub_ids: list[str]) -> set[str]:
         """
         Check which sub_ids already exist in the staging table.
 

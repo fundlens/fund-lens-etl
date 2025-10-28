@@ -17,12 +17,11 @@ from sqlalchemy.orm import Session
 from fund_lens_etl.clients.fec_client import FECClient
 from fund_lens_etl.config import get_database_url
 from fund_lens_etl.repos import (
+    ExtractionMetadataRepo,
     FECContributionStagingRepo,
     RawFilingRepo,
-    ExtractionMetadataRepo,
 )
 from fund_lens_etl.services.fec_service import FECExtractionService
-
 
 # In initialize_backfill_services:
 raw_filing_repo = RawFilingRepo()

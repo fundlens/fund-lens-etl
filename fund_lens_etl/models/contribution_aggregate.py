@@ -2,16 +2,17 @@
 
 import sqlalchemy as sa
 from sqlalchemy import (
-    Column,
-    BigInteger,
-    String,
-    Integer,
-    Date,
     TIMESTAMP,
+    BigInteger,
+    Column,
+    Date,
     ForeignKey,
+    Integer,
+    String,
     func,
 )
 from sqlalchemy.orm import relationship
+
 from fund_lens_etl.database import Base
 
 
@@ -19,9 +20,7 @@ class ContributionAggregate(Base):
     __tablename__ = "contribution_aggregates"
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
-    candidate_id = Column(
-        BigInteger, ForeignKey("candidates.id"), nullable=False, index=True
-    )
+    candidate_id = Column(BigInteger, ForeignKey("candidates.id"), nullable=False, index=True)
     aggregation_period = Column(String(20), nullable=False)  # cycle, quarter, month
     period_start = Column(Date, nullable=False)
     period_end = Column(Date, nullable=False)

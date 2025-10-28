@@ -1,8 +1,8 @@
 """Repository for raw_filings table operations."""
 
 import logging
-from typing import Optional, List
 from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -46,7 +46,7 @@ class RawFilingRepo:
         logger.info(f"Inserted raw filing with id={raw_filing.id}")
         return raw_filing
 
-    def get_by_file_hash(self, session: Session, file_hash: str) -> Optional[RawFiling]:
+    def get_by_file_hash(self, session: Session, file_hash: str) -> RawFiling | None:
         """
         Get a raw filing by file hash.
 
@@ -64,9 +64,9 @@ class RawFilingRepo:
         self,
         session: Session,
         source: str,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-    ) -> List[RawFiling]:
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> list[RawFiling]:
         """
         Get raw filings by source and optional date range.
 

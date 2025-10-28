@@ -2,18 +2,18 @@
 
 import sqlalchemy as sa
 from sqlalchemy import (
-    Column,
-    BigInteger,
-    String,
-    Integer,
-    Date,
-    Text,
-    Float,
-    Boolean,
     TIMESTAMP,
-    ForeignKey,
-    func,
+    BigInteger,
+    Boolean,
     CheckConstraint,
+    Column,
+    Date,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    func,
 )
 from sqlalchemy.orm import relationship
 
@@ -41,9 +41,7 @@ class Contribution(Base):
     )
     recipient_candidate_id = Column(BigInteger, ForeignKey("candidates.id"), index=True)
 
-    contribution_type = Column(
-        String(20), nullable=False
-    )  # individual, pac, party, self
+    contribution_type = Column(String(20), nullable=False)  # individual, pac, party, self
     transaction_type = Column(String(3))  # FEC transaction type code
     election_type = Column(String(20))  # primary, general, runoff, special
     is_itemized = Column(Boolean, nullable=False, default=True)
@@ -60,9 +58,7 @@ class Contribution(Base):
     )
 
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-    updated_at = Column(
-        TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now()
-    )
+    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
 
     donor = relationship("Donor", backref="contributions")
     committee = relationship("Committee", backref="contributions_received")

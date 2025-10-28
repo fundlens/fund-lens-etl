@@ -1,7 +1,7 @@
 """Canditate model"""
 
 import sqlalchemy as sa
-from sqlalchemy import Column, BigInteger, String, Integer, TIMESTAMP, ForeignKey, func
+from sqlalchemy import TIMESTAMP, BigInteger, Column, ForeignKey, Integer, String, func
 from sqlalchemy.orm import relationship
 
 from fund_lens_etl.database import Base
@@ -27,12 +27,8 @@ class Candidate(Base):
     committee = relationship("Committee", backref="candidates")
 
     __table_args__ = (
-        sa.UniqueConstraint(
-            "data_source", "source_candidate_id", name="uq_candidate_source_id"
-        ),
+        sa.UniqueConstraint("data_source", "source_candidate_id", name="uq_candidate_source_id"),
     )
 
     created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
-    updated_at = Column(
-        TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now()
-    )
+    updated_at = Column(TIMESTAMP, nullable=False, server_default=func.now(), onupdate=func.now())
