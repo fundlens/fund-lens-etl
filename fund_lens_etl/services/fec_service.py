@@ -3,7 +3,6 @@
 import logging
 import hashlib
 import json
-from dateutil import parser  # type: ignore
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 
@@ -203,16 +202,16 @@ class FECExtractionService:
         contributor_state: str,
         two_year_transaction_period: int,
         source: str = "fec_api",
-        max_results: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        max_results: int | None = None,
+    ) -> dict[str, Any]:
         """
-        Extract and store FEC contributions incrementally using date-based filtering.
+        Extract and store FEC contributions incrementally using date-based filtering
+        with fetch-and-store batching for resilience.
 
         This method:
         1. Checks metadata for the last processed date
-        2. Fetches only contributions after that date
-        3. Stores new contributions
-        4. Updates metadata with new last processed date
+        2. Fetches contributions in batches, storing each batch immediately
+        3. Updates metadata with new last processed date
 
         Args:
             session: Database session
@@ -244,167 +243,144 @@ class FECExtractionService:
             else:
                 logger.info("First extraction - fetching all contributions")
 
-            # Step 2: Fetch contributions with date filter
-            contributions = self.fec_client.get_contributions(
-                contributor_state=contributor_state,
-                two_year_transaction_period=two_year_transaction_period,
-                min_date=last_processed_date,  # Only fetch contributions after this date
-                max_results=max_results,
-            )
+            # Tracking variables for batch processing
+            total_fetched = 0
+            total_stored = 0
+            all_contribution_dates = []
+            current_raw_filing_id: int | None = None
 
-            if not contributions:
-                logger.info("No new contributions found")
-                # Still update metadata to record the extraction attempt
-                self.metadata_repo.upsert_metadata(
-                    session=session,
+            # Define batch processing callback
+            def process_batch(batch_contributions: list[dict[str, Any]]) -> None:
+                """
+                Define batch processing callback
+                """
+                nonlocal \
+                    total_fetched, \
+                    total_stored, \
+                    all_contribution_dates, \
+                    current_raw_filing_id
+
+                total_fetched += len(batch_contributions)
+                logger.info(
+                    f"Processing batch: {len(batch_contributions)} contributions (total fetched: {total_fetched:,})"
+                )
+
+                # Calculate file hash for this batch
+                file_hash = self._calculate_file_hash(batch_contributions)
+
+                # Check for file-level deduplication
+                existing_filing = self.raw_filing_repo.get_by_file_hash(
+                    session, file_hash
+                )
+                if existing_filing:
+                    logger.info(
+                        f"Batch already processed (raw_filing_id={existing_filing.id}). Skipping batch."
+                    )
+                    return
+
+                # Record-level deduplication
+                batch_sub_ids = [
+                    c["sub_id"]
+                    for c in batch_contributions
+                    if c.get("sub_id") is not None
+                ]
+                existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
+                    session, batch_sub_ids
+                )
+
+                new_contributions = [
+                    c
+                    for c in batch_contributions
+                    if c.get("sub_id") is not None
+                    and c["sub_id"] not in existing_sub_ids
+                ]
+
+                duplicate_count = len(batch_contributions) - len(new_contributions)
+                if duplicate_count > 0:
+                    logger.info(
+                        f"Batch has {duplicate_count} duplicates. Storing {len(new_contributions)} new contributions."
+                    )
+
+                if not new_contributions:
+                    logger.info(
+                        "No new contributions in this batch after deduplication"
+                    )
+                    return
+
+                # Store raw filing for this batch
+                file_metadata = {
+                    "contributor_state": contributor_state,
+                    "two_year_transaction_period": two_year_transaction_period,
+                    "record_count": len(batch_contributions),
+                    "extraction_type": "incremental_batch",
+                    "min_date": last_processed_date.isoformat()
+                    if last_processed_date
+                    else None,
+                }
+
+                raw_filing = self._create_raw_filing(
+                    contributions=batch_contributions,
                     source=source,
-                    entity_type="contributions",
-                    state=contributor_state,
-                    cycle=two_year_transaction_period,
-                    last_processed_date=last_processed_date,  # Keep same date
-                    records_extracted=0,
-                    status="active",
+                    file_hash=file_hash,
+                    file_metadata=file_metadata,
                 )
-                session.commit()
+                session.add(raw_filing)
+                session.flush()
 
-                return {
-                    "contributions_fetched": 0,
-                    "contributions_stored": 0,
-                    "raw_filing_id": None,
-                    "file_hash": None,
-                    "last_processed_date": last_processed_date.isoformat()
-                    if last_processed_date
-                    else None,
-                }
+                assert raw_filing.id is not None
+                filing_id: int = raw_filing.id
+                current_raw_filing_id = filing_id
 
-            logger.info(f"Fetched {len(contributions)} contributions from API")
-
-            # Step 3: Calculate file hash for deduplication
-            file_hash = self._calculate_file_hash(contributions)
-            logger.debug(f"Calculated file hash: {file_hash}")
-
-            # Step 4: Check if we've already processed this exact data
-            existing_filing = self.raw_filing_repo.get_by_file_hash(session, file_hash)
-            if existing_filing:
-                logger.info(
-                    f"Data already processed (raw_filing_id={existing_filing.id}). Skipping."
-                )
-                return {
-                    "contributions_fetched": len(contributions),
-                    "raw_filing_id": existing_filing.id,
-                    "contributions_stored": 0,
-                    "file_hash": file_hash,
-                    "skipped": True,
-                    "last_processed_date": last_processed_date.isoformat()
-                    if last_processed_date
-                    else None,
-                }
-
-            # Step 5: Record-level deduplication (filter out existing sub_ids)
-            all_sub_ids = [
-                c["sub_id"] for c in contributions if c.get("sub_id") is not None
-            ]
-            existing_sub_ids = self.fec_staging_repo.get_existing_sub_ids(
-                session, all_sub_ids
-            )
-
-            new_contributions = [
-                c
-                for c in contributions
-                if c.get("sub_id") is not None and c["sub_id"] not in existing_sub_ids
-            ]
-
-            duplicate_count = len(contributions) - len(new_contributions)
-            if duplicate_count > 0:
-                logger.info(
-                    f"Found {duplicate_count} duplicate contributions (by sub_id). "
-                    f"Storing {len(new_contributions)} new contributions."
-                )
-
-            # Update contributions list to only process new ones
-            original_contributions = contributions
-            original_count = len(contributions)
-            contributions = new_contributions
-
-            # Step 6: Store raw filing record
-            # Build metadata
-            file_metadata = {
-                "contributor_state": contributor_state,
-                "two_year_transaction_period": two_year_transaction_period,
-                "record_count": original_count,
-                "extraction_type": "incremental",
-                "min_date": last_processed_date.isoformat()
-                if last_processed_date
-                else None,
-            }
-
-            raw_filing = self._create_raw_filing(
-                contributions=original_contributions,
-                source=source,
-                file_hash=file_hash,
-                file_metadata=file_metadata,
-            )
-            session.add(raw_filing)
-            # Flush to get raw_filing.id
-            session.flush()
-
-            # Type assertion for mypy
-            assert raw_filing.id is not None
-            filing_id: int = raw_filing.id
-
-            logger.info(f"Stored raw filing with id={filing_id}")
-
-            # Step 7: Store individual contributions in staging with batching
-            from fund_lens_etl.config import FEC_BATCH_SIZE
-
-            stored_count = 0
-            total_to_store = len(contributions)
-
-            for i in range(0, total_to_store, FEC_BATCH_SIZE):
-                batch = contributions[i : i + FEC_BATCH_SIZE]
-                batch_num = (i // FEC_BATCH_SIZE) + 1
-                total_batches = (total_to_store + FEC_BATCH_SIZE - 1) // FEC_BATCH_SIZE
-
-                logger.info(
-                    f"Processing batch {batch_num}/{total_batches}: "
-                    f"{len(batch)} contributions (records {i + 1}-{min(i + FEC_BATCH_SIZE, total_to_store)})"
-                )
-
-                batch_stored = self._store_contributions_staging(
+                # Store contributions in staging
+                stored_count = self._store_contributions_staging(
                     session=session,
                     raw_filing_id=filing_id,
-                    contributions=batch,
+                    contributions=new_contributions,
                 )
 
-                stored_count += batch_stored
+                total_stored += stored_count
 
-                # Commit each batch
+                # Commit this batch
                 session.commit()
                 logger.info(
-                    f"Batch {batch_num}/{total_batches} committed: "
-                    f"{batch_stored} contributions stored "
-                    f"(total so far: {stored_count}/{total_to_store})"
+                    f"Batch committed: {stored_count} contributions stored "
+                    f"(total stored: {total_stored:,}/{total_fetched:,})"
                 )
 
-            logger.info(
-                f"All batches complete: {stored_count} total contributions stored"
-            )
-
-            # Step 8: Determine the new last processed date (max date from this batch)
-            new_last_processed_date = None
-            if contributions:
-                # Get the maximum contribution_receipt_date from the batch
-                dates = [
+                # Track contribution dates for metadata update
+                batch_dates = [
                     c.get("contribution_receipt_date")
-                    for c in contributions
+                    for c in batch_contributions
                     if c.get("contribution_receipt_date")
                 ]
-                if dates:
-                    parsed_dates = [parser.parse(d) for d in dates]
+                all_contribution_dates.extend(batch_dates)
+
+            # Step 2: Fetch contributions with batching callback
+            logger.info("Starting fetch-and-store batching process...")
+            self.fec_client.get_contributions(
+                contributor_state=contributor_state,
+                two_year_transaction_period=two_year_transaction_period,
+                min_date=last_processed_date,
+                max_results=max_results,
+                batch_callback=process_batch,
+                batch_size=1000,  # Process every 1000 records
+            )
+
+            logger.info(
+                f"Fetch-and-store complete: {total_fetched:,} fetched, {total_stored:,} stored"
+            )
+
+            # Step 3: Determine new last processed date
+            new_last_processed_date = None
+            if all_contribution_dates:
+                from dateutil import parser
+
+                parsed_dates = [parser.parse(d) for d in all_contribution_dates if d]
+                if parsed_dates:
                     new_last_processed_date = max(parsed_dates)
                     logger.info(f"New last processed date: {new_last_processed_date}")
 
-            # Step 9: Update metadata
+            # Step 4: Update metadata
             self.metadata_repo.upsert_metadata(
                 session=session,
                 source=source,
@@ -412,24 +388,18 @@ class FECExtractionService:
                 state=contributor_state,
                 cycle=two_year_transaction_period,
                 last_processed_date=new_last_processed_date or last_processed_date,
-                records_extracted=stored_count,
+                records_extracted=total_stored,
                 status="active",
             )
 
-            # Commit the transaction
             session.commit()
-            logger.info("Metadata and raw filing committed")
-
-            logger.info(
-                f"Successfully extracted and stored {stored_count} contributions "
-                f"(raw_filing_id={filing_id})"
-            )
+            logger.info("Metadata updated and committed")
 
             return {
-                "contributions_fetched": original_count,
-                "raw_filing_id": filing_id,
-                "contributions_stored": stored_count,
-                "file_hash": file_hash,
+                "contributions_fetched": total_fetched,
+                "raw_filing_id": current_raw_filing_id,
+                "contributions_stored": total_stored,
+                "file_hash": "multiple_batches",
                 "last_processed_date": new_last_processed_date.isoformat()
                 if new_last_processed_date
                 else None,
