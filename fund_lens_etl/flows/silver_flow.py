@@ -2,6 +2,7 @@
 
 import pandas as pd
 from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NONE as NO_CACHE
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,16 @@ from fund_lens_etl.models.silver import SilverFECContribution
 from fund_lens_etl.transformers import BronzeToSilverFECTransformer
 
 
-@task
+def safe_extract_value(value):
+    """Safely extract Python value from pandas/numpy types."""
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+@task(cache_policy=NO_CACHE)
 def get_unprocessed_bronze_records(
     session: Session,
     committee_id: str | None = None,
@@ -64,7 +74,7 @@ def get_unprocessed_bronze_records(
     return records
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def transform_and_load_to_silver(
     session: Session,
     bronze_records: list[BronzeFECScheduleA],
@@ -129,7 +139,7 @@ def transform_and_load_to_silver(
     # Load to silver layer
     loaded_count = 0
     for _, row in silver_df.iterrows():
-        source_sub_id = str(row["source_sub_id"])
+        source_sub_id = str(row["sub_id"])
 
         # Check if already exists
         stmt = select(SilverFECContribution).where(
@@ -143,12 +153,14 @@ def transform_and_load_to_silver(
         silver_record = SilverFECContribution(
             source_sub_id=source_sub_id,
             transaction_id=str(row["transaction_id"]),
-            file_number=int(row["file_number"].item()) if pd.notna(row["file_number"]) else None,
+            file_number=int(safe_extract_value(row["file_number"]))
+            if pd.notna(row["file_number"])
+            else None,
             contribution_date=row["contribution_date"].date()
             if hasattr(row["contribution_date"], "date")
             else row["contribution_date"],
-            contribution_amount=float(row["contribution_amount"].item()),
-            contributor_aggregate_ytd=float(row["contributor_aggregate_ytd"].item())
+            contribution_amount=float(safe_extract_value(row["contribution_amount"])),
+            contributor_aggregate_ytd=float(safe_extract_value(row["contributor_aggregate_ytd"]))
             if pd.notna(row["contributor_aggregate_ytd"])
             else None,
             contributor_name=str(row["contributor_name"]),
@@ -179,8 +191,10 @@ def transform_and_load_to_silver(
             receipt_type=str(row["receipt_type"]) if pd.notna(row["receipt_type"]) else None,
             election_type=str(row["election_type"]) if pd.notna(row["election_type"]) else None,
             memo_text=str(row["memo_text"]) if pd.notna(row["memo_text"]) else None,
-            election_cycle=int(row["election_cycle"].item()),
-            report_year=int(row["report_year"].item()) if pd.notna(row["report_year"]) else None,
+            election_cycle=int(safe_extract_value(row["election_cycle"])),
+            report_year=int(safe_extract_value(row["report_year"]))
+            if pd.notna(row["report_year"])
+            else None,
         )
 
         session.add(silver_record)

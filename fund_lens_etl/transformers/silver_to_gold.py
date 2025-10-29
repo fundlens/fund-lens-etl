@@ -1,13 +1,23 @@
 """Transformers for silver to gold layer."""
 
+import logging
 from datetime import UTC, datetime
 
 import pandas as pd
 from prefect import get_run_logger
+from prefect.exceptions import MissingContextError
 from sqlalchemy.orm import Session
 
 from fund_lens_etl.models.gold import GoldCommittee, GoldContributor
 from fund_lens_etl.transformers.base import BaseTransformer
+
+
+def get_logger():
+    """Get logger - Prefect if available, otherwise standard logging."""
+    try:
+        return get_run_logger()
+    except MissingContextError:
+        return logging.getLogger(__name__)
 
 
 # noinspection PyArgumentEqualDefault,PyMethodMayBeStatic
@@ -48,7 +58,7 @@ class SilverToGoldFECTransformer(BaseTransformer):
         Returns:
             Gold layer DataFrame with resolved entities
         """
-        logger = get_run_logger()
+        logger = get_logger()
         logger.info(f"Transforming {len(df)} silver records to gold")
 
         if df.empty:

@@ -3,6 +3,7 @@
 from datetime import UTC, date, datetime
 
 from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NONE as NO_CACHE
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,7 @@ from fund_lens_etl.extractors import FECAPIExtractor
 from fund_lens_etl.models.bronze import BronzeFECExtractionState, BronzeFECScheduleA
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def get_extraction_state(
     session: Session, committee_id: str, election_cycle: int
 ) -> BronzeFECExtractionState | None:
@@ -48,7 +49,7 @@ def get_extraction_state(
     return state
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def load_page_to_bronze(
     session: Session,
     page_df,
@@ -137,7 +138,7 @@ def load_page_to_bronze(
     return loaded_count
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def update_extraction_state(
     session: Session,
     committee_id: str,

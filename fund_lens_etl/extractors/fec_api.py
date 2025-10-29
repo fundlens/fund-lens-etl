@@ -1,5 +1,6 @@
 """FEC API extractor for campaign finance data."""
 
+import logging
 from collections.abc import Generator
 from datetime import date, timedelta
 from typing import Any
@@ -7,10 +8,19 @@ from typing import Any
 import pandas as pd
 import requests
 from prefect import get_run_logger
+from prefect.exceptions import MissingContextError
 
 from fund_lens_etl.config import USState, get_settings, validate_election_cycle
 from fund_lens_etl.extractors.base import BaseExtractor
 from fund_lens_etl.utils import FECRateLimiter
+
+
+def get_logger():
+    """Get logger - Prefect if available, otherwise standard logging."""
+    try:
+        return get_run_logger()
+    except MissingContextError:
+        return logging.getLogger(__name__)
 
 
 class FECAPIExtractor(BaseExtractor):
@@ -84,7 +94,7 @@ class FECAPIExtractor(BaseExtractor):
         Yields:
             Tuple of (DataFrame with page data, pagination metadata)
         """
-        logger = get_run_logger()
+        logger = get_logger()
         election_cycle = validate_election_cycle(election_cycle)
 
         logger.info(
@@ -197,7 +207,7 @@ class FECAPIExtractor(BaseExtractor):
         Returns:
             DataFrame with candidate records
         """
-        logger = get_run_logger()
+        logger = get_logger()
         election_cycle = election_cycle or 2026
         election_cycle = validate_election_cycle(election_cycle)
 
@@ -261,7 +271,7 @@ class FECAPIExtractor(BaseExtractor):
         Returns:
             DataFrame with committee records
         """
-        logger = get_run_logger()
+        logger = get_logger()
         election_cycle = election_cycle or 2026
         election_cycle = validate_election_cycle(election_cycle)
 
@@ -316,33 +326,64 @@ class FECAPIExtractor(BaseExtractor):
         Returns:
             List of dictionaries with committee and candidate info
         """
-        logger = get_run_logger()
+        logger = get_logger()
         election_cycle = validate_election_cycle(election_cycle)
 
-        committees = []
+        logger.info(f"Fetching committees for {state.value}, cycle {election_cycle}")
 
-        # Get House and Senate candidates
-        for office in ["H", "S"]:
-            candidates_df = self.extract_candidates(
-                state=state, office=office, election_cycle=election_cycle
-            )
+        all_committees = []
+        page = 1
+        per_page = 100
 
-            for _, candidate in candidates_df.iterrows():
-                principal_committees = candidate.get("principal_committees", [])
+        # Get all committees for the state and cycle
+        while True:
+            params = {
+                "state": state.value,
+                "cycle": election_cycle,
+                "per_page": per_page,
+                "page": page,
+            }
 
-                if principal_committees:
-                    for committee in principal_committees:
-                        committees.append(
-                            {
-                                "committee_id": committee.get("committee_id"),
-                                "committee_name": committee.get("name"),
-                                "candidate_id": candidate.get("candidate_id"),
-                                "candidate_name": candidate.get("name"),
-                                "office": candidate.get("office"),
-                                "district": candidate.get("district"),
-                                "party": candidate.get("party"),
-                            }
-                        )
+            try:
+                data = self._make_request("/committees/", params)
+            except requests.HTTPError as e:
+                logger.error(f"API request failed: {e}")
+                raise
 
-        logger.info(f"Found {len(committees)} {state.value} candidate committees")
-        return committees
+            results = data.get("results", [])
+
+            if not results:
+                break
+
+            for committee in results:
+                committee_type = committee.get("committee_type")
+                designation = committee.get("designation")
+
+                # Filter for candidate committees:
+                # - Committee type H (House) or S (Senate)
+                # - Designation P (Principal) or A (Authorized)
+                if committee_type in ["H", "S"] and designation in ["P", "A"]:
+                    candidate_ids = committee.get("candidate_ids", [])
+                    all_committees.append(
+                        {
+                            "committee_id": committee.get("committee_id"),
+                            "committee_name": committee.get("name"),
+                            "candidate_id": candidate_ids[0] if candidate_ids else None,
+                            "candidate_name": None,  # Not available in committee endpoint
+                            "office": committee_type,
+                            "district": None,  # Not available in committee endpoint
+                            "party": committee.get("party"),
+                        }
+                    )
+
+            logger.info(f"Retrieved {len(results)} committees from page {page}")
+
+            # Check pagination
+            pagination = data.get("pagination", {})
+            if page >= pagination.get("pages", 0):
+                break
+
+            page += 1
+
+        logger.info(f"Found {len(all_committees)} {state.value} candidate committees")
+        return all_committees

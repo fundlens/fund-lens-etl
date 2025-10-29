@@ -1,12 +1,22 @@
 """Rate limiter for FEC API requests."""
 
+import logging
 import time
 from collections import deque
 from datetime import datetime, timedelta
 
 from prefect import get_run_logger
+from prefect.exceptions import MissingContextError
 
 from fund_lens_etl.config import get_settings
+
+
+def get_logger():
+    """Get logger - Prefect if available, otherwise standard logging."""
+    try:
+        return get_run_logger()
+    except MissingContextError:
+        return logging.getLogger(__name__)
 
 
 class FECRateLimiter:
@@ -16,7 +26,7 @@ class FECRateLimiter:
     Uses sliding window algorithm to track request timestamps.
     """
 
-    def __init__(self) -> None:
+    def __init__(self):
         """Initialize rate limiter with empty request queues."""
         self.settings = get_settings()
 
@@ -53,7 +63,7 @@ class FECRateLimiter:
 
         Blocks execution until it's safe to make another request.
         """
-        logger = get_run_logger()
+        logger = get_logger()
         now = datetime.now()
 
         # Clean up old requests

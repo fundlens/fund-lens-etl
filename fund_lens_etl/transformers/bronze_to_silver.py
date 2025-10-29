@@ -1,15 +1,25 @@
-"""Transformers for bronze to silver layer."""
+"""Transformer for bronze to silver layer."""
 
-from datetime import UTC, datetime
+import logging
 
 import pandas as pd
 from prefect import get_run_logger
+from prefect.exceptions import MissingContextError
 
 from fund_lens_etl.transformers.base import BaseTransformer
 
 
+def get_logger():
+    """Get logger - Prefect if available, otherwise standard logging."""
+    try:
+        return get_run_logger()
+    except MissingContextError:
+        return logging.getLogger(__name__)
+
+
+# noinspection PyArgumentEqualDefault
 class BronzeToSilverFECTransformer(BaseTransformer):
-    """Transform FEC bronze data to silver layer."""
+    """Transform FEC Schedule A data from bronze to silver layer."""
 
     def get_source_layer(self) -> str:
         """Get source layer name."""
@@ -24,126 +34,146 @@ class BronzeToSilverFECTransformer(BaseTransformer):
         Transform bronze FEC Schedule A data to silver layer.
 
         Cleaning operations:
-        - Standardize data types
-        - Clean ZIP codes (5 digits only)
-        - Handle missing values with defaults
-        - Extract nested committee information
-        - Add transformation metadata
+        - Standardize column names
+        - Handle missing values
+        - Normalize text fields (trim, uppercase states)
+        - Standardize ZIP codes (5 digits)
+        - Convert dates to proper datetime
+        - Validate and clean numeric fields
+        - Remove duplicate records
 
         Args:
-            df: Bronze layer DataFrame (raw API response)
-            **kwargs: Additional parameters (unused)
+            df: Bronze layer DataFrame
+            **kwargs: Additional transformation parameters
 
         Returns:
             Cleaned DataFrame ready for silver layer
         """
-        logger = get_run_logger()
+        logger = get_logger()
         logger.info(f"Transforming {len(df)} bronze records to silver")
 
         if df.empty:
-            logger.warning("Empty DataFrame received, returning empty silver DataFrame")
+            logger.warning("Empty DataFrame provided for transformation")
             return pd.DataFrame()
 
-        # Create silver DataFrame with cleaned fields
-        silver_df = pd.DataFrame()
+        # Create a copy to avoid modifying original
+        df = df.copy()
 
-        # Source reference
-        silver_df["bronze_sub_id"] = df["sub_id"]
+        # 1. Standardize column names (bronze -> silver mapping)
+        column_mapping = {
+            "sub_id": "sub_id",
+            "transaction_id": "transaction_id",
+            "file_number": "file_number",
+            "contribution_receipt_date": "contribution_date",
+            "contribution_receipt_amount": "contribution_amount",
+            "contributor_aggregate_ytd": "contributor_aggregate_ytd",
+            "contributor_name": "contributor_name",
+            "contributor_first_name": "contributor_first_name",
+            "contributor_last_name": "contributor_last_name",
+            "contributor_city": "contributor_city",
+            "contributor_state": "contributor_state",
+            "contributor_zip": "contributor_zip",
+            "contributor_employer": "contributor_employer",
+            "contributor_occupation": "contributor_occupation",
+            "entity_type": "entity_type",
+            "committee_id": "committee_id",
+            "recipient_committee_designation": "committee_designation",
+            "receipt_type": "receipt_type",
+            "election_type": "election_type",
+            "memo_text": "memo_text",
+            "two_year_transaction_period": "election_cycle",
+            "report_year": "report_year",
+        }
 
-        # Transaction identifiers
-        silver_df["transaction_id"] = df["transaction_id"]
-        silver_df["file_number"] = pd.to_numeric(df["file_number"], errors="coerce")
+        df = df.rename(columns=column_mapping)
 
-        # Dates (convert to datetime)
-        silver_df["contribution_date"] = pd.to_datetime(
-            df["contribution_receipt_date"], errors="coerce"
-        )
+        # 2. Extract committee info from raw_json
+        if "raw_json" in df.columns:
 
-        # Amounts (ensure numeric)
-        silver_df["contribution_amount"] = pd.to_numeric(
-            df["contribution_receipt_amount"], errors="coerce"
-        )
-        silver_df["contributor_aggregate_ytd"] = pd.to_numeric(
-            df["contributor_aggregate_ytd"], errors="coerce"
-        )
+            def extract_committee_info(row):
+                """Extract committee details from raw_json."""
+                if pd.isna(row.get("raw_json")):
+                    return pd.Series({"committee_name": None, "committee_type": None})
+                # noinspection PyBroadException
+                try:
+                    raw_data = row["raw_json"]
+                    if isinstance(raw_data, str):
+                        import json
 
-        # Contributor information (standardized)
-        silver_df["contributor_name"] = df["contributor_name"].fillna("UNKNOWN")
-        silver_df["contributor_first_name"] = df["contributor_first_name"]
-        silver_df["contributor_last_name"] = df["contributor_last_name"]
-        silver_df["contributor_city"] = df["contributor_city"]
-        silver_df["contributor_state"] = df["contributor_state"]
+                        raw_data = json.loads(raw_data)
 
-        # Clean ZIP codes - 5 digits only
-        silver_df["contributor_zip"] = (
-            df["contributor_zip"].astype(str).str[:5].replace("nan", None)
-        )
+                    # Extract from committee object
+                    if isinstance(raw_data, dict) and "committee" in raw_data:
+                        committee = raw_data["committee"]
+                        if isinstance(committee, dict):
+                            return pd.Series(
+                                {
+                                    "committee_name": committee.get("name"),
+                                    "committee_type": committee.get("committee_type"),
+                                }
+                            )
+                    return pd.Series({"committee_name": None, "committee_type": None})
+                except Exception:
+                    return pd.Series({"committee_name": None, "committee_type": None})
 
-        # Employer and occupation with defaults
-        silver_df["contributor_employer"] = df["contributor_employer"].fillna("NOT PROVIDED")
-        silver_df["contributor_occupation"] = df["contributor_occupation"].fillna("NOT PROVIDED")
-        silver_df["entity_type"] = df["entity_type"].fillna("UNKNOWN")
+            committee_info = df.apply(extract_committee_info, axis=1)
+            df["committee_name"] = committee_info["committee_name"]
+            df["committee_type"] = committee_info["committee_type"]
+        else:
+            df["committee_name"] = None
+            df["committee_type"] = None
 
-        # Committee information
-        silver_df["committee_id"] = df["committee_id"]
+        # 3. Clean text fields - trim whitespace
+        text_columns = [
+            "contributor_name",
+            "contributor_first_name",
+            "contributor_last_name",
+            "contributor_city",
+            "contributor_employer",
+            "contributor_occupation",
+        ]
 
-        # Extract committee name from nested 'committee' object
-        silver_df["committee_name"] = df.apply(
-            lambda row: (
-                row["committee"].get("name") if isinstance(row.get("committee"), dict) else None
-            ),
-            axis=1,
-        )
+        for col in text_columns:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+                # Replace 'nan' string with actual None
+                df[col] = df[col].replace(["nan", "None", ""], None)
 
-        # Extract committee type from nested object
-        silver_df["committee_type"] = df.apply(
-            lambda row: (
-                row["committee"].get("committee_type")
-                if isinstance(row.get("committee"), dict)
-                else None
-            ),
-            axis=1,
-        )
+        # 4. Standardize state codes to uppercase
+        if "contributor_state" in df.columns:
+            df["contributor_state"] = df["contributor_state"].str.upper()
 
-        silver_df["committee_designation"] = df["recipient_committee_designation"]
-
-        # Transaction details
-        silver_df["receipt_type"] = df["receipt_type"]
-        silver_df["election_type"] = df["election_type"]
-        silver_df["memo_text"] = df["memo_text"]
-
-        # Metadata
-        silver_df["election_cycle"] = pd.to_numeric(
-            df["two_year_transaction_period"], errors="coerce"
-        )
-        silver_df["report_year"] = pd.to_numeric(df["report_year"], errors="coerce")
-
-        # Add timestamps
-        silver_df["created_at"] = datetime.now(UTC)
-        silver_df["updated_at"] = datetime.now(UTC)
-
-        # Data quality checks
-        initial_count = len(silver_df)
-
-        # Drop rows with missing critical fields
-        silver_df = silver_df.dropna(
-            subset=["bronze_sub_id", "contribution_date", "contribution_amount"]
-        )
-
-        dropped_count = initial_count - len(silver_df)
-        if dropped_count > 0:
-            logger.warning(
-                f"Dropped {dropped_count} records due to missing critical fields "
-                "(sub_id, date, or amount)"
+        # 5. Normalize ZIP codes to 5 digits
+        if "contributor_zip" in df.columns:
+            df["contributor_zip"] = (
+                df["contributor_zip"]
+                .astype(str)
+                .str.replace(r"[^\d]", "", regex=True)  # Remove non-digits
+                .str[:5]  # Take first 5 digits
+                .replace("", None)  # Empty strings to None
             )
 
-        # Log data quality metrics
-        logger.info(f"Transformation complete: {len(silver_df)} records")
-        logger.info(
-            f"Date range: {silver_df['contribution_date'].min()} to {silver_df['contribution_date'].max()}"
-        )
-        logger.info(f"Total amount: ${silver_df['contribution_amount'].sum():,.2f}")
-        logger.info(f"Unique contributors: {silver_df['contributor_name'].nunique()}")
-        logger.info(f"Unique committees: {silver_df['committee_id'].nunique()}")
+        # 6. Ensure numeric fields are proper types
+        numeric_columns = ["contribution_amount", "contributor_aggregate_ytd"]
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
 
-        return silver_df
+        # 7. Ensure date fields are datetime
+        if "contribution_date" in df.columns:
+            df["contribution_date"] = pd.to_datetime(df["contribution_date"], errors="coerce")
+
+        # 8. Remove exact duplicates based on sub_id
+        initial_count = len(df)
+        df = df.drop_duplicates(subset=["sub_id"], keep="first")
+        duplicates_removed = initial_count - len(df)
+
+        if duplicates_removed > 0:
+            logger.info(f"Removed {duplicates_removed} duplicate records")
+
+        # 9. Add metadata
+        df["loaded_at"] = pd.Timestamp.now()
+
+        logger.info(f"Transformation complete: {len(df)} clean records")
+
+        return df

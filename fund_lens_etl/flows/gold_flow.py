@@ -2,6 +2,7 @@
 
 import pandas as pd
 from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NONE as NO_CACHE
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,7 +13,7 @@ from fund_lens_etl.models.silver import SilverFECContribution
 from fund_lens_etl.transformers import SilverToGoldFECTransformer
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def get_unprocessed_silver_records(
     session: Session,
     committee_id: str | None = None,
@@ -66,7 +67,7 @@ def get_unprocessed_silver_records(
     return records
 
 
-@task
+@task(cache_policy=NO_CACHE)
 def transform_and_load_to_gold(
     session: Session,
     silver_records: list[SilverFECContribution],

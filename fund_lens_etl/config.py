@@ -3,6 +3,7 @@
 from datetime import datetime
 from enum import Enum
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -128,6 +129,10 @@ class ElectionCycle(int):
         return v
 
 
+# Find project root (where .env should be)
+PROJECT_ROOT = Path(__file__).parent.parent
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -141,19 +146,19 @@ class Settings(BaseSettings):
     batch_size: int = 1000
 
     # Incremental Load Configuration
-    lookback_days: int = 90  # Days to look back from last processed contribution
-    sort_order: str = "asc"  # Default to ascending (oldest first)
+    lookback_days: int = 90
+    sort_order: str = "asc"
 
-    # Rate Limiting (FEC API limits: 60 requests/minute, 1000 requests/hour)
-    max_requests_per_minute: int = 55  # Buffer below limit
-    max_requests_per_hour: int = 950  # Buffer below limit
-    api_rate_limit_delay: float = 1.1  # Minimum seconds between requests
+    # Rate Limiting
+    max_requests_per_minute: int = 55
+    max_requests_per_hour: int = 950
+    api_rate_limit_delay: float = 1.1
 
     # Logging
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(PROJECT_ROOT / ".env"),  # Explicit path to .env
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
