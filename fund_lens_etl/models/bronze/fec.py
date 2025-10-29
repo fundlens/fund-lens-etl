@@ -1,9 +1,9 @@
 """Bronze layer models - raw data from source systems."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import JSON, Date, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Date, DateTime, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from fund_lens_etl.models.base import Base, SourceMetadataMixin, TimestampMixin
@@ -134,3 +134,42 @@ class BronzeFECCommittee(Base, TimestampMixin, SourceMetadataMixin):
 
     def __repr__(self) -> str:
         return f"<BronzeFECCommittee(committee_id={self.committee_id}, name={self.name})>"
+
+
+class BronzeFECExtractionState(Base, TimestampMixin):
+    """Track extraction state for incremental loads."""
+
+    __tablename__ = "bronze_fec_extraction_state"
+
+    # Composite primary key
+    committee_id: Mapped[str] = mapped_column(String(20), primary_key=True)
+    election_cycle: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # Last successfully processed contribution
+    last_contribution_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    last_sub_id: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    # Extraction statistics
+    total_contributions_extracted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_extraction_timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    # Extraction window for this run
+    extraction_start_date: Mapped[date | None] = mapped_column(Date)
+    extraction_end_date: Mapped[date | None] = mapped_column(Date)
+
+    # Status tracking
+    is_complete: Mapped[bool] = mapped_column(default=False, nullable=False)
+    last_page_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    def __repr__(self) -> str:
+        return (
+            f"<BronzeFECExtractionState("
+            f"committee_id={self.committee_id}, "
+            f"cycle={self.election_cycle}, "
+            f"last_date={self.last_contribution_date}"
+            f")>"
+        )

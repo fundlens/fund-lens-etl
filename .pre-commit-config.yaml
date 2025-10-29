@@ -40,5 +40,5 @@ repos:
     hooks:
       - id: mypy
         args: [--ignore-missing-imports, --show-error-codes]
-        additional_dependencies: [types-requests, types-python-dateutil]
+        additional_dependencies: [types-requests, types-python-dateutil, pandas-stubs]
         files: ^fund_lens_etl/.*\.py$
