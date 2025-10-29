@@ -12,7 +12,6 @@ dependencies = [
     "sqlalchemy (>=2.0.44,<3.0.0)",
     "psycopg2-binary (>=2.9.11,<3.0.0)",
     "python-dotenv (>=1.1.1,<2.0.0)",
-    "notebook (>=7.4.7,<8.0.0)",
     "prefect (>=3.4.25,<4.0.0)",
 ]
 
