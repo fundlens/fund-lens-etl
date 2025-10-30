@@ -1,4 +1,4 @@
-"""FEC API extractor for campaign finance data."""
+"""FEC Schedule A extractor for individual contributions."""
 
 import logging
 from collections.abc import Generator
@@ -10,9 +10,9 @@ import requests
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
 
+from fund_lens_etl.clients.fec import FECAPIClient
 from fund_lens_etl.config import USState, get_settings, validate_election_cycle
 from fund_lens_etl.extractors.base import BaseExtractor
-from fund_lens_etl.utils import FECRateLimiter
 
 
 def get_logger():
@@ -23,16 +23,18 @@ def get_logger():
         return logging.getLogger(__name__)
 
 
-class FECAPIExtractor(BaseExtractor):
-    """Extractor for FEC API data with page-by-page streaming."""
+class FECScheduleAExtractor(BaseExtractor):
+    """Extractor for FEC Schedule A (individual contributions) with page-by-page streaming."""
 
-    BASE_URL = "https://api.open.fec.gov/v1"
+    def __init__(self, api_client: FECAPIClient | None = None):
+        """
+        Initialize Schedule A extractor.
 
-    def __init__(self):
-        """Initialize FEC API extractor."""
+        Args:
+            api_client: FEC API client (creates default if None)
+        """
+        self.api_client = api_client or FECAPIClient()
         self.settings = get_settings()
-        self.api_key = self.settings.fec_api_key
-        self.rate_limiter = FECRateLimiter()
 
     def get_source_name(self) -> str:
         """Get source system name."""
@@ -45,31 +47,6 @@ class FECAPIExtractor(BaseExtractor):
         Use specific generator methods like extract_schedule_a_pages().
         """
         raise NotImplementedError("Use generator methods: extract_schedule_a_pages(), etc.")
-
-    def _make_request(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
-        """
-        Make a request to the FEC API with rate limiting.
-
-        Args:
-            endpoint: API endpoint path (e.g., '/schedules/schedule_a/')
-            params: Query parameters
-
-        Returns:
-            JSON response as dictionary
-
-        Raises:
-            requests.HTTPError: If request fails
-        """
-        # Wait if needed to respect rate limits
-        self.rate_limiter.wait_if_needed()
-
-        url = f"{self.BASE_URL}{endpoint}"
-        params["api_key"] = self.api_key
-
-        response = requests.get(url, params=params, timeout=30)
-        response.raise_for_status()
-
-        return response.json()
 
     def extract_schedule_a_pages(
         self,
@@ -128,7 +105,7 @@ class FECAPIExtractor(BaseExtractor):
             logger.info(f"Fetching page {page}...")
 
             try:
-                data = self._make_request("/schedules/schedule_a/", params)
+                data = self.api_client.get("/schedules/schedule_a/", params)
             except requests.HTTPError as e:
                 logger.error(f"API request failed on page {page}: {e}")
                 raise
@@ -149,7 +126,7 @@ class FECAPIExtractor(BaseExtractor):
                 "total_pages": pagination.get("pages", 0),
                 "total_count": pagination.get("count", 0),
                 "records_in_page": len(results),
-                "rate_limiter_stats": self.rate_limiter.get_stats(),
+                "rate_limiter_stats": self.api_client.get_rate_limiter_stats(),
             }
 
             if page == 1:
@@ -190,131 +167,6 @@ class FECAPIExtractor(BaseExtractor):
         lookback_days = lookback_days or self.settings.lookback_days
         return last_contribution_date - timedelta(days=lookback_days)
 
-    def extract_candidates(
-        self,
-        state: USState,
-        office: str | None = None,
-        election_cycle: int | None = None,
-    ) -> pd.DataFrame:
-        """
-        Extract candidate data (single call, not paginated for MVP).
-
-        Args:
-            state: State code
-            office: Office type ('H', 'S', 'P')
-            election_cycle: Election cycle year
-
-        Returns:
-            DataFrame with candidate records
-        """
-        logger = get_logger()
-        election_cycle = election_cycle or 2026
-        election_cycle = validate_election_cycle(election_cycle)
-
-        logger.info(
-            f"Extracting candidates for {state.value}, " f"office {office}, cycle {election_cycle}"
-        )
-
-        all_records = []
-        page = 1
-        per_page = 100
-
-        while True:
-            params = {
-                "state": state.value,
-                "cycle": election_cycle,
-                "per_page": per_page,
-                "page": page,
-            }
-
-            if office:
-                params["office"] = office
-
-            try:
-                data = self._make_request("/candidates/", params)
-            except requests.HTTPError as e:
-                logger.error(f"API request failed: {e}")
-                raise
-
-            results = data.get("results", [])
-
-            if not results:
-                break
-
-            all_records.extend(results)
-            logger.info(f"Retrieved {len(results)} candidates from page {page}")
-
-            # Check pagination
-            pagination = data.get("pagination", {})
-            if page >= pagination.get("pages", 0):
-                break
-
-            page += 1
-
-        df = pd.DataFrame(all_records)
-        logger.info(f"Extraction complete: {len(df)} candidates")
-
-        return df
-
-    def extract_committees(
-        self,
-        state: USState,
-        election_cycle: int | None = None,
-    ) -> pd.DataFrame:
-        """
-        Extract committee data (single call, not paginated for MVP).
-
-        Args:
-            state: State code
-            election_cycle: Election cycle year
-
-        Returns:
-            DataFrame with committee records
-        """
-        logger = get_logger()
-        election_cycle = election_cycle or 2026
-        election_cycle = validate_election_cycle(election_cycle)
-
-        logger.info(f"Extracting committees for {state.value}, cycle {election_cycle}")
-
-        all_records = []
-        page = 1
-        per_page = 100
-
-        while True:
-            params = {
-                "state": state.value,
-                "cycle": election_cycle,
-                "per_page": per_page,
-                "page": page,
-            }
-
-            try:
-                data = self._make_request("/committees/", params)
-            except requests.HTTPError as e:
-                logger.error(f"API request failed: {e}")
-                raise
-
-            results = data.get("results", [])
-
-            if not results:
-                break
-
-            all_records.extend(results)
-            logger.info(f"Retrieved {len(results)} committees from page {page}")
-
-            # Check pagination
-            pagination = data.get("pagination", {})
-            if page >= pagination.get("pages", 0):
-                break
-
-            page += 1
-
-        df = pd.DataFrame(all_records)
-        logger.info(f"Extraction complete: {len(df)} committees")
-
-        return df
-
     def get_candidate_committees(self, state: USState, election_cycle: int) -> list[dict[str, Any]]:
         """
         Get all House and Senate candidate principal committees for a state.
@@ -345,7 +197,7 @@ class FECAPIExtractor(BaseExtractor):
             }
 
             try:
-                data = self._make_request("/committees/", params)
+                data = self.api_client.get("/committees/", params)
             except requests.HTTPError as e:
                 logger.error(f"API request failed: {e}")
                 raise

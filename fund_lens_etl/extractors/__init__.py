@@ -1,5 +1,13 @@
 """Extractors for various data sources."""
 
-from fund_lens_etl.extractors.fec_api import FECAPIExtractor
+from fund_lens_etl.extractors.fec import (
+    FECCandidateExtractor,
+    FECCommitteeExtractor,
+    FECScheduleAExtractor,
+)
 
-__all__ = ["FECAPIExtractor"]
+__all__ = [
+    "FECScheduleAExtractor",
+    "FECCommitteeExtractor",
+    "FECCandidateExtractor",
+]

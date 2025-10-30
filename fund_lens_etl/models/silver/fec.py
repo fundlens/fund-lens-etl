@@ -44,11 +44,18 @@ class SilverFECContribution(Base, TimestampMixin):
     )
     entity_type: Mapped[str] = mapped_column(String(10), nullable=False)  # IND, ORG, etc.
 
-    # Committee information (recipient)
+    # Committee information (recipient) - enriched from bronze_fec_committee
     committee_id: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     committee_name: Mapped[str | None] = mapped_column(String(500))
     committee_type: Mapped[str | None] = mapped_column(String(10))
     committee_designation: Mapped[str | None] = mapped_column(String(10))
+    committee_party: Mapped[str | None] = mapped_column(String(10))  # NEW: enriched
+
+    # Candidate information - enriched from bronze_fec_candidate via committee
+    candidate_id: Mapped[str | None] = mapped_column(String(20), index=True)  # NEW: enriched
+    candidate_name: Mapped[str | None] = mapped_column(String(500))  # NEW: enriched
+    candidate_office: Mapped[str | None] = mapped_column(String(1))  # NEW: enriched (H, S, P)
+    candidate_party: Mapped[str | None] = mapped_column(String(10))  # NEW: enriched
 
     # Transaction details
     receipt_type: Mapped[str | None] = mapped_column(String(10))

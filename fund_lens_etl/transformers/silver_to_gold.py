@@ -2,13 +2,16 @@
 
 import logging
 from datetime import UTC, datetime
+from typing import cast
 
 import pandas as pd
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from fund_lens_etl.models.gold import GoldCommittee, GoldContributor
+from fund_lens_etl.models.gold import GoldCandidate, GoldCommittee, GoldContributor
+from fund_lens_etl.models.silver.fec import SilverFECCandidate, SilverFECCommittee
 from fund_lens_etl.transformers.base import BaseTransformer
 
 
@@ -20,7 +23,7 @@ def get_logger():
         return logging.getLogger(__name__)
 
 
-# noinspection PyArgumentEqualDefault,PyMethodMayBeStatic
+# noinspection PyMethodMayBeStatic,PyArgumentEqualDefault
 class SilverToGoldFECTransformer(BaseTransformer):
     """Transform FEC silver data to gold layer with entity resolution."""
 
@@ -29,7 +32,7 @@ class SilverToGoldFECTransformer(BaseTransformer):
         Initialize transformer with database session.
 
         Args:
-            session: SQLAlchemy session for entity lookups/creation
+            session: SQLAlchemy session for entity lookups/creation and Silver JOINs
         """
         self.session = session
 
@@ -46,13 +49,14 @@ class SilverToGoldFECTransformer(BaseTransformer):
         Transform silver FEC contribution data to gold layer.
 
         This involves:
+        - Enriching with Silver committee and candidate data via JOINs
         - Entity resolution (contributors, committees, candidates)
         - Deduplication across sources
         - Standardized schemas
         - Foreign key relationships
 
         Args:
-            df: Silver layer DataFrame
+            df: Silver layer DataFrame (contributions only)
             **kwargs: Additional parameters
 
         Returns:
@@ -65,6 +69,9 @@ class SilverToGoldFECTransformer(BaseTransformer):
             logger.warning("Empty DataFrame received, returning empty gold DataFrame")
             return pd.DataFrame()
 
+        # Enrich with Silver committee and candidate data
+        df = self._enrich_with_silver_entities(df)
+
         gold_records = []
 
         for idx, row in df.iterrows():
@@ -75,13 +82,13 @@ class SilverToGoldFECTransformer(BaseTransformer):
                 # Resolve or create committee
                 committee_id = self._resolve_committee(row)
 
-                # Resolve candidate (if applicable)
+                # Resolve or create candidate (if applicable)
                 candidate_id = self._resolve_candidate(row)
 
                 # Create gold contribution record
                 gold_record = {
                     "source_system": "FEC",
-                    "source_transaction_id": row["bronze_sub_id"],
+                    "source_transaction_id": row["sub_id"],
                     "contribution_date": row["contribution_date"],
                     "amount": row["contribution_amount"],
                     "contributor_id": contributor_id,
@@ -110,6 +117,102 @@ class SilverToGoldFECTransformer(BaseTransformer):
 
         return gold_df
 
+    def _enrich_with_silver_entities(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Enrich contribution DataFrame with Silver committee and candidate data via JOINs.
+
+        Args:
+            df: DataFrame with committee_id from SilverFECContribution
+
+        Returns:
+            DataFrame enriched with committee and candidate details from Silver tables
+        """
+        logger = get_logger()
+        logger.info("Enriching with Silver committee and candidate data")
+
+        # Get unique committee IDs
+        unique_committee_ids = df["committee_id"].dropna().unique().tolist()
+
+        if not unique_committee_ids:
+            logger.warning("No committee IDs found")
+            return df
+
+        # Query Silver committees
+        stmt = select(SilverFECCommittee).where(
+            SilverFECCommittee.source_committee_id.in_(unique_committee_ids)
+        )
+        result = self.session.execute(stmt)
+
+        silver_committees = {}
+        for committee in result.scalars():
+            silver_committees[committee.source_committee_id] = {
+                "committee_name": committee.name,
+                "committee_type": committee.committee_type,
+                "committee_designation": committee.designation,
+                "committee_state": committee.state,
+                "committee_city": committee.city,
+            }
+
+        logger.info(f"Found {len(silver_committees)} committees in Silver")
+
+        # Map committee data to DataFrame
+        df["silver_committee_name"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_name")
+        )
+        df["silver_committee_type"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_type")
+        )
+        df["silver_committee_designation"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_designation")
+        )
+        df["silver_committee_state"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_state")
+        )
+        df["silver_committee_city"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_city")
+        )
+
+        # Now get candidate data from Silver (if candidate_id exists in contribution)
+        if "candidate_id" in df.columns:
+            unique_candidate_ids = df["candidate_id"].dropna().unique().tolist()
+
+            if unique_candidate_ids:
+                candidate_stmt = select(SilverFECCandidate).where(
+                    SilverFECCandidate.source_candidate_id.in_(unique_candidate_ids)
+                )
+                candidate_result = self.session.execute(candidate_stmt)  # New variable name
+
+                silver_candidates = {}
+                for candidate in candidate_result.scalars():  # Use new variable name
+                    silver_candidates[candidate.source_candidate_id] = {
+                        "candidate_name": candidate.name,
+                        "candidate_office": candidate.office,
+                        "candidate_party": candidate.party,
+                        "candidate_state": candidate.state,
+                        "candidate_district": candidate.district,
+                    }
+
+                logger.info(f"Found {len(silver_candidates)} candidates in Silver")
+
+                # Map candidate data to DataFrame
+                df["silver_candidate_name"] = df["candidate_id"].map(
+                    lambda x: silver_candidates.get(x, {}).get("candidate_name")
+                )
+                df["silver_candidate_office"] = df["candidate_id"].map(
+                    lambda x: silver_candidates.get(x, {}).get("candidate_office")
+                )
+                df["silver_candidate_party"] = df["candidate_id"].map(
+                    lambda x: silver_candidates.get(x, {}).get("candidate_party")
+                )
+                df["silver_candidate_state"] = df["candidate_id"].map(
+                    lambda x: silver_candidates.get(x, {}).get("candidate_state")
+                )
+                df["silver_candidate_district"] = df["candidate_id"].map(
+                    lambda x: silver_candidates.get(x, {}).get("candidate_district")
+                )
+
+        return df
+
     def _resolve_contributor(self, row: pd.Series) -> int:
         """
         Resolve or create a gold contributor entity.
@@ -121,18 +224,17 @@ class SilverToGoldFECTransformer(BaseTransformer):
             Gold contributor ID
         """
         # Try to find existing contributor by name + location
-        existing = (
-            self.session.query(GoldContributor)
-            .filter(
-                GoldContributor.name == row["contributor_name"],
-                GoldContributor.state == row.get("contributor_state"),
-                GoldContributor.zip == row.get("contributor_zip"),
-            )
-            .first()
+        stmt = select(GoldContributor).where(
+            GoldContributor.name == row["contributor_name"],
+            GoldContributor.state == row.get("contributor_state"),
+            GoldContributor.zip == row.get("contributor_zip"),
         )
 
+        result = self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
         if existing:
-            return existing.id  # type: ignore[return-value]
+            return existing.id
 
         # Create new contributor
         contributor = GoldContributor(
@@ -155,33 +257,33 @@ class SilverToGoldFECTransformer(BaseTransformer):
 
     def _resolve_committee(self, row: pd.Series) -> int:
         """
-        Resolve or create a gold committee entity.
+        Resolve or create a gold committee entity using Silver committee data.
 
         Args:
-            row: Silver contribution row
+            row: Silver contribution row (enriched with Silver committee data)
 
         Returns:
             Gold committee ID
         """
-        committee_fec_id = str(row["committee_id"])  # Fix: explicit cast
+        committee_fec_id = str(row["committee_id"])
 
         # Try to find existing by FEC ID
-        existing = (
-            self.session.query(GoldCommittee)
-            .filter(GoldCommittee.fec_committee_id == committee_fec_id)
-            .first()
-        )
+        stmt = select(GoldCommittee).where(GoldCommittee.fec_committee_id == committee_fec_id)
+
+        result = self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
 
         if existing:
-            return existing.id  # type: ignore[return-value]
+            return existing.id
 
-        # Create new committee
+        # Create new committee using Silver data
         committee = GoldCommittee(
-            name=str(row.get("committee_name", "UNKNOWN")),  # Fix: explicit cast
-            committee_type=self._map_committee_type(row.get("committee_designation")),
-            state=None,  # Would need to join with committee table for this
-            city=None,
-            candidate_id=None,  # Resolved separately
+            name=str(row.get("silver_committee_name", "UNKNOWN")),
+            committee_type=self._map_committee_type(row.get("silver_committee_designation")),
+            party=None,  # Party not in Silver committee (could add if needed)
+            state=row.get("silver_committee_state"),
+            city=row.get("silver_committee_city"),
+            candidate_id=None,  # Will be linked after candidate resolution
             fec_committee_id=committee_fec_id,
             is_active=True,
         )
@@ -191,21 +293,48 @@ class SilverToGoldFECTransformer(BaseTransformer):
 
         return committee.id
 
-    def _resolve_candidate(self, row: pd.Series) -> int | None:  # Fix: remove unused param warning
+    def _resolve_candidate(self, row: pd.Series) -> int | None:
         """
-        Resolve candidate if this is a candidate committee.
+        Resolve or create candidate using Silver candidate data.
 
         Args:
-            row: Silver contribution row (not used in MVP)
+            row: Silver contribution row (enriched with Silver candidate data)
 
         Returns:
             Gold candidate ID or None
         """
-        # For MVP, we don't have candidate linkage in silver layer yet
-        # This would require joining with silver_fec_committee/candidate tables
-        # Returning None for now
-        _ = row  # Explicitly mark as intentionally unused
-        return None
+        # Check if we have candidate data from Silver enrichment
+        candidate_fec_id = row.get("candidate_id")
+
+        if pd.isna(candidate_fec_id) or not candidate_fec_id:
+            return None
+
+        candidate_fec_id = str(candidate_fec_id)
+
+        # Try to find existing by FEC ID
+        stmt = select(GoldCandidate).where(GoldCandidate.fec_candidate_id == candidate_fec_id)
+
+        result = self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            return existing.id
+
+        # Create new candidate using Silver data
+        candidate = GoldCandidate(
+            name=str(row.get("silver_candidate_name", "UNKNOWN")),
+            office=self._map_office_type(row.get("silver_candidate_office")),
+            state=row.get("silver_candidate_state"),
+            district=row.get("silver_candidate_district"),
+            party=row.get("silver_candidate_party"),
+            fec_candidate_id=candidate_fec_id,
+            is_active=True,
+        )
+
+        self.session.add(candidate)
+        self.session.flush()
+
+        return candidate.id
 
     def _classify_contribution_type(self, row: pd.Series) -> str:
         """
@@ -281,6 +410,27 @@ class SilverToGoldFECTransformer(BaseTransformer):
 
         return type_mapping.get(designation, "OTHER")
 
+    def _map_office_type(self, office: str | None) -> str:
+        """
+        Map FEC office type to gold standard.
+
+        Args:
+            office: FEC office code (H, S, P)
+
+        Returns:
+            Standardized office type
+        """
+        if not office:
+            return "UNKNOWN"
+
+        type_mapping = {
+            "H": "HOUSE",
+            "S": "SENATE",
+            "P": "PRESIDENT",
+        }
+
+        return type_mapping.get(office, "OTHER")
+
     def _get_election_year(self, row: pd.Series) -> int:
         """
         Determine election year from contribution date and cycle.
@@ -292,5 +442,5 @@ class SilverToGoldFECTransformer(BaseTransformer):
             Election year
         """
         # For two-year cycles, the election year is the even year
-        cycle = row["election_cycle"]
-        return cycle if cycle % 2 == 0 else cycle + 1  # type: ignore[return-value]
+        cycle = cast(int, row["election_cycle"])
+        return cycle if cycle % 2 == 0 else cycle + 1

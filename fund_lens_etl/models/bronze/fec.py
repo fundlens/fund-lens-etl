@@ -75,20 +75,50 @@ class BronzeFECCandidate(Base, TimestampMixin, SourceMetadataMixin):
 
     # Candidate information
     name: Mapped[str | None] = mapped_column(String(500))
+    candidate_first_name: Mapped[str | None] = mapped_column(String(255))
+    candidate_last_name: Mapped[str | None] = mapped_column(String(255))
+    candidate_middle_name: Mapped[str | None] = mapped_column(String(255))
+
+    # Office information
     office: Mapped[str | None] = mapped_column(String(1))  # H, S, P
     office_full: Mapped[str | None] = mapped_column(String(50))
     state: Mapped[str | None] = mapped_column(String(2), index=True)
     district: Mapped[str | None] = mapped_column(String(2))
+    district_number: Mapped[int | None] = mapped_column(Integer)
+
+    # Party affiliation
     party: Mapped[str | None] = mapped_column(String(10))
     party_full: Mapped[str | None] = mapped_column(String(100))
 
-    # Election cycles
+    # Incumbency status
+    incumbent_challenge: Mapped[str | None] = mapped_column(String(1))
+    incumbent_challenge_full: Mapped[str | None] = mapped_column(String(100))
+
+    # Election cycles and years
     cycles: Mapped[list[int] | None] = mapped_column(JSON)
     election_years: Mapped[list[int] | None] = mapped_column(JSON)
+    election_districts: Mapped[list[str] | None] = mapped_column(JSON)
 
     # Status
     is_active: Mapped[bool | None] = mapped_column()
     candidate_status: Mapped[str | None] = mapped_column(String(1))
+    candidate_inactive: Mapped[bool | None] = mapped_column()
+
+    # Filing dates
+    first_file_date: Mapped[date | None] = mapped_column(Date)
+    last_file_date: Mapped[date | None] = mapped_column(Date)
+    last_f2_date: Mapped[date | None] = mapped_column(Date)
+
+    # Financial flags
+    has_raised_funds: Mapped[bool | None] = mapped_column()
+    federal_funds_flag: Mapped[bool | None] = mapped_column()
+
+    # Address information
+    address_city: Mapped[str | None] = mapped_column(String(255))
+    address_state: Mapped[str | None] = mapped_column(String(2))
+    address_street_1: Mapped[str | None] = mapped_column(String(500))
+    address_street_2: Mapped[str | None] = mapped_column(String(500))
+    address_zip: Mapped[str | None] = mapped_column(String(10))
 
     # Raw JSON for full record preservation
     raw_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
@@ -112,6 +142,10 @@ class BronzeFECCommittee(Base, TimestampMixin, SourceMetadataMixin):
     designation: Mapped[str | None] = mapped_column(String(1))
     designation_full: Mapped[str | None] = mapped_column(String(100))
 
+    # Party affiliation (NEW)
+    party: Mapped[str | None] = mapped_column(String(10))
+    party_full: Mapped[str | None] = mapped_column(String(100))
+
     # Location
     state: Mapped[str | None] = mapped_column(String(2), index=True)
     city: Mapped[str | None] = mapped_column(String(255))
@@ -121,6 +155,15 @@ class BronzeFECCommittee(Base, TimestampMixin, SourceMetadataMixin):
 
     # Treasurer
     treasurer_name: Mapped[str | None] = mapped_column(String(500))
+
+    # Organization details (NEW)
+    organization_type: Mapped[str | None] = mapped_column(String(1))
+    organization_type_full: Mapped[str | None] = mapped_column(String(100))
+
+    # Filing information (NEW)
+    filing_frequency: Mapped[str | None] = mapped_column(String(1))
+    first_file_date: Mapped[date | None] = mapped_column(Date)
+    last_file_date: Mapped[date | None] = mapped_column(Date)
 
     # Affiliated candidate
     candidate_ids: Mapped[list[str] | None] = mapped_column(JSON)

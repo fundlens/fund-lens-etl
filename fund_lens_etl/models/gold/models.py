@@ -89,6 +89,9 @@ class GoldCommittee(Base, TimestampMixin):
         String(50), nullable=False, index=True
     )  # CANDIDATE, PAC, PARTY, SUPER_PAC, etc.
 
+    # Political affiliation (NEW)
+    party: Mapped[str | None] = mapped_column(String(50), index=True)
+
     # Location
     state: Mapped[str | None] = mapped_column(String(2), index=True)
     city: Mapped[str | None] = mapped_column(String(255))
