@@ -84,17 +84,23 @@ class FECScheduleAExtractor(BaseExtractor):
         if end_date:
             logger.info(f"End date filter: {end_date}")
 
-        page = starting_page
+        page = 1
         per_page = 100
+        last_index = None
+        last_date = None
 
         while True:
             params = {
                 "committee_id": committee_id,
                 "two_year_transaction_period": election_cycle,
                 "per_page": per_page,
-                "page": page,
                 "sort": "contribution_receipt_date",  # Ascending - oldest first
             }
+
+            # Add cursor pagination if we have it
+            if last_index and last_date:
+                params["last_index"] = last_index
+                params["last_contribution_receipt_date"] = last_date
 
             # Add date filters if provided
             if start_date:
@@ -136,15 +142,23 @@ class FECScheduleAExtractor(BaseExtractor):
                 )
 
             logger.info(
-                f"Page {page}/{page_metadata['total_pages']}: " f"{len(results)} records retrieved"
+                f"Page {page}/{page_metadata['total_pages']}: {len(results)} records retrieved"
             )
 
             # Yield this page's data
             yield df, page_metadata
 
-            # Check if we've reached the last page
-            if page >= pagination.get("pages", 0):
-                logger.info(f"Reached last page ({page})")
+            # Get cursor for next page
+            last_indexes = pagination.get("last_indexes", {})
+            if not last_indexes:
+                logger.info("No last_indexes in pagination - reached end")
+                break
+
+            last_index = last_indexes.get("last_index")
+            last_date = last_indexes.get("last_contribution_receipt_date")
+
+            if not last_index or not last_date:
+                logger.info("Missing cursor values - reached end")
                 break
 
             page += 1
