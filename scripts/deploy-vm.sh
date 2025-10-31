@@ -55,6 +55,20 @@ FEC_API_KEY=${FEC_API_KEY}
 PREFECT_API_URL=http://localhost:4200/api
 EOF
 
+# Setup database user (if not already exists)
+echo "Setting up database user..."
+POSTGRES_HOST=${POSTGRES_HOST} \
+POSTGRES_ADMIN_USER=${POSTGRES_ADMIN_USER} \
+POSTGRES_ADMIN_PASSWORD=${POSTGRES_ADMIN_PASSWORD} \
+DATABASE_NAME=${DATABASE_NAME} \
+DB_USERNAME=${DB_USERNAME} \
+DB_PASSWORD=${DB_PASSWORD} \
+bash /opt/fund-lens-etl/scripts/setup-db-user.sh
+
+# Run database migrations
+echo "Running database migrations..."
+poetry run alembic upgrade head
+
 # Create Prefect server systemd service if it doesn't exist
 if [ ! -f "/etc/systemd/system/prefect-server.service" ]; then
   echo "Creating Prefect server systemd service..."

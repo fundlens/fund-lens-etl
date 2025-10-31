@@ -63,3 +63,9 @@ variable "os_disk_size_gb" {
   description = "Disk size in GB of VM"
   default = 30
 }
+
+variable "db_password" {
+  type = string
+  description = "PostgreSQL database password for ETL application"
+  sensitive = true
+}

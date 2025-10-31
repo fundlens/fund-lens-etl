@@ -47,3 +47,13 @@ output "postgres_fqdn" {
   description = "Fully qualified domain name of the PostgreSQL server"
   value       = local.postgres_fqdn
 }
+
+output "database_name" {
+  description = "Name of the PostgreSQL database"
+  value       = azurerm_postgresql_flexible_server_database.etl.name
+}
+
+output "database_username" {
+  description = "Database username for ETL application"
+  value       = local.db_username
+}

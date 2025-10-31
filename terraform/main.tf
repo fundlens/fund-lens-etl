@@ -26,6 +26,7 @@ locals {
   vnet_name            = data.terraform_remote_state.shared.outputs.vnet_name
   storage_account_name = data.terraform_remote_state.shared.outputs.storage_account_name
   postgres_fqdn        = data.terraform_remote_state.shared.outputs.postgres_server_fqdn
+  postgres_server_name = split(".", data.terraform_remote_state.shared.outputs.postgres_server_fqdn)[0]
 }
 
 data "azurerm_resource_group" "shared" {
@@ -38,9 +39,16 @@ data "azurerm_subnet" "vm" {
   resource_group_name  = data.azurerm_resource_group.shared.name
 }
 
+data "azurerm_postgresql_flexible_server" "shared" {
+  name                = local.postgres_server_name
+  resource_group_name = data.azurerm_resource_group.shared.name
+}
+
 locals {
-  location  = data.azurerm_resource_group.shared.location
-  subnet_id = data.azurerm_subnet.vm.id  # Changed to use data source
+  location      = data.azurerm_resource_group.shared.location
+  subnet_id     = data.azurerm_subnet.vm.id
+  database_name = "${var.project_name}-${var.environment}-etl"
+  db_username   = replace(local.database_name, "-", "_")  # Replace hyphens with underscores for username
 }
 
 resource "azurerm_user_assigned_identity" "etl_vm" {
@@ -202,3 +210,15 @@ resource "azurerm_linux_virtual_machine" "etl_vm" {
 
   tags = local.common_tags
 }
+
+# PostgreSQL Database
+resource "azurerm_postgresql_flexible_server_database" "etl" {
+  name      = local.database_name
+  server_id = data.azurerm_postgresql_flexible_server.shared.id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
+# Note: Database user creation is handled by the deployment script
+# (scripts/deploy-vm.sh) because the PostgreSQL server uses private endpoints
+# and is not accessible from Terraform running outside the Azure VNet.

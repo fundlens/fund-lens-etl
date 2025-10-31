@@ -48,3 +48,13 @@ os_disk_size_gb      = 30
 # Generate one with: ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
 
 ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQC... your-email@example.com"
+
+# -----------------------------------------------------------------------------
+# Database Configuration
+# -----------------------------------------------------------------------------
+# Password for the ETL application database user
+# NOTE: Username is auto-generated from project_name and environment
+#       (e.g., fund_lens_production_etl)
+# NOTE: Database user is created from the VM during deployment
+
+db_password = "your-secure-db-password-here"
