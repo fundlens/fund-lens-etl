@@ -76,9 +76,9 @@ docs/_build/
 .pybuilder/
 target/
 
-# But allow notebooks themselves
-notebooks/
-*.ipynb
+# Jupyter Notebook checkpoints (but keep .ipynb files)
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
 
 # IPython
 profile_default/

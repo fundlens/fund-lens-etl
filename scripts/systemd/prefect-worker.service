@@ -1,0 +1,21 @@
+[Unit]
+Description=Prefect Worker for FundLens ETL
+After=network-online.target prefect-server.service
+Wants=network-online.target
+Requires=prefect-server.service
+
+[Service]
+Type=simple
+User=${VM_USER}
+WorkingDirectory=/opt/fund-lens-etl
+Environment="PATH=/opt/fund-lens-etl/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/fund-lens-etl/.env
+ExecStart=/opt/fund-lens-etl/.venv/bin/prefect worker start --pool default --name fundlens-etl-worker
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prefect-worker
+
+[Install]
+WantedBy=multi-user.target

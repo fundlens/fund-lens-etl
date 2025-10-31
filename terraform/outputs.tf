@@ -27,3 +27,23 @@ output "ssh_command" {
   description = "SSH command to connect to the VM"
   value       = "ssh ${var.admin_username}@${azurerm_public_ip.etl_vm.ip_address}"
 }
+
+output "resource_group_name" {
+  description = "Name of the resource group"
+  value       = local.resource_group_name
+}
+
+output "vm_name" {
+  description = "Name of the VM"
+  value       = azurerm_linux_virtual_machine.etl_vm.name
+}
+
+output "admin_username" {
+  description = "Admin username for the VM"
+  value       = var.admin_username
+}
+
+output "postgres_fqdn" {
+  description = "Fully qualified domain name of the PostgreSQL server"
+  value       = local.postgres_fqdn
+}

@@ -131,16 +131,26 @@ Built to scale beyond initial Maryland 2026 scope:
 
 ## Development
 
-Notebook-driven development approach with 9 exploration/testing notebooks covering:
+Notebook-driven development approach with 10 exploration/testing notebooks covering:
 - API client testing and rate limit validation
 - Extractor/loader unit testing
 - Transformation logic validation
 - End-to-end flow testing
 - Data quality verification
+- Prefect deployment configuration
+
+## CI/CD Pipeline
+
+Fully automated deployment via GitHub Actions:
+- **Infrastructure**: Terraform provisions Azure resources on push to main
+- **Application**: Auto-deploys Prefect flows to VM after infrastructure updates
+- **Scheduling**: Flows run automatically (daily incremental + monthly full refresh)
+
+See [CICD.md](CICD.md) for configuration details and required secrets.
 
 ---
 
-**Portfolio Project**: Demonstrates modern data engineering practices including medallion architecture, incremental processing, rate limiting, data quality validation, and production-grade orchestration with Prefect.
+**Portfolio Project**: Demonstrates modern data engineering practices including medallion architecture, incremental processing, rate limiting, data quality validation, production-grade orchestration with Prefect, and automated CI/CD deployment.
 
 ## License
 
