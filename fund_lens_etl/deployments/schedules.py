@@ -58,7 +58,7 @@ def create_bronze_deployments():
     )
     deployments.append(daily_incremental)
 
-    # Monthly full refresh (1st of each month)
+    # Monthly full refresh (first Sunday of each month)
     monthly_full_refresh = bronze_ingestion_flow.to_deployment(
         name="bronze-ingestion-monthly-full-refresh",
         version="1.0.0",
@@ -70,7 +70,7 @@ def create_bronze_deployments():
             "full_refresh": True,
         },
         schedule=CronSchedule(
-            cron="0 3 1 * *",  # 3 AM ET, 1st of month
+            cron="0 3 1-7 * 0",  # 3 AM ET, first Sunday of month
             timezone=TIMEZONE,
         ),
     )
@@ -123,7 +123,7 @@ def create_silver_deployments():
             "cycle": DEFAULT_CYCLE,
         },
         schedule=CronSchedule(
-            cron="30 3 1 * *",  # 3:30 AM ET, 1st of month (30 min after full refresh)
+            cron="30 3 1-7 * 0",  # 3:30 AM ET, first Sunday of month (30 min after full refresh)
             timezone=TIMEZONE,
         ),
     )
@@ -176,7 +176,7 @@ def create_gold_deployments():
             "cycle": DEFAULT_CYCLE,
         },
         schedule=CronSchedule(
-            cron="30 4 1 * *",  # 4:30 AM ET, 1st of month (1 hour after monthly silver)
+            cron="30 4 1-7 * 0",  # 4:30 AM ET, first Sunday of month (1 hour after monthly silver)
             timezone=TIMEZONE,
         ),
     )
@@ -220,7 +220,7 @@ def print_schedule_summary():
     print("  2:30 AM ET - Silver: Transform bronze → silver")
     print("  3:30 AM ET - Gold: Transform silver → gold")
     print()
-    print("MONTHLY PIPELINE (1st of month):")
+    print("MONTHLY PIPELINE (First Sunday of month):")
     print("  3:00 AM ET - Bronze: Full refresh (all data)")
     print("  3:30 AM ET - Silver: Transform bronze → silver")
     print("  4:30 AM ET - Gold: Transform silver → gold")

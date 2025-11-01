@@ -262,7 +262,7 @@ Once deployed, flows will run automatically:
 - 2:30 AM ET - Silver transformation
 - 3:30 AM ET - Gold transformation
 
-**Monthly (1st of month):**
+**Monthly (First Sunday of month):**
 - 3:00 AM ET - Bronze ingestion (full refresh)
 - 3:30 AM ET - Silver transformation
 - 4:30 AM ET - Gold transformation
