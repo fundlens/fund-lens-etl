@@ -216,9 +216,6 @@ data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 
-# Alembic
-alembic.ini
-
 # Prefect
 .prefect/
 
