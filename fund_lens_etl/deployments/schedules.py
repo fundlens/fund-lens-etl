@@ -47,7 +47,7 @@ def create_bronze_deployments():
         description="Daily incremental extraction from FEC API with 90-day lookback",
         tags=["etl", "bronze", "incremental", "daily"],
         work_pool_name="default",
-        path="/opt/fund-lens-etl",
+        pull_steps=[],  # Code is already on the filesystem, no need to pull
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -67,7 +67,7 @@ def create_bronze_deployments():
         description="Monthly full refresh to catch late filings and corrections",
         tags=["etl", "bronze", "full-refresh", "monthly"],
         work_pool_name="default",
-        path="/opt/fund-lens-etl",
+        pull_steps=[],  # Code is already on the filesystem, no need to pull
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -106,7 +106,7 @@ def create_silver_deployments():
         description="Daily transformation of bronze data to silver layer",
         tags=["etl", "silver", "transformation", "daily"],
         work_pool_name="default",
-        path="/opt/fund-lens-etl",
+        pull_steps=[],  # Code is already on the filesystem, no need to pull
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -125,7 +125,7 @@ def create_silver_deployments():
         description="Monthly transformation after full refresh",
         tags=["etl", "silver", "transformation", "monthly"],
         work_pool_name="default",
-        path="/opt/fund-lens-etl",
+        pull_steps=[],  # Code is already on the filesystem, no need to pull
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -163,7 +163,7 @@ def create_gold_deployments():
         description="Daily transformation of silver data to gold analytics layer",
         tags=["etl", "gold", "analytics", "daily"],
         work_pool_name="default",
-        path="/opt/fund-lens-etl",
+        pull_steps=[],  # Code is already on the filesystem, no need to pull
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -182,7 +182,7 @@ def create_gold_deployments():
         description="Monthly transformation after full refresh pipeline",
         tags=["etl", "gold", "analytics", "monthly"],
         work_pool_name="default",
-        path="/opt/fund-lens-etl",
+        pull_steps=[],  # Code is already on the filesystem, no need to pull
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
