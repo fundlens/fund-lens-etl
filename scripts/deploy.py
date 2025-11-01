@@ -27,41 +27,26 @@ from fund_lens_etl.deployments.schedules import (
 )
 
 
-def deploy_flows(deployments: list, description: str):
+def deploy_flows(deploy_func, description: str):
     """
-    Deploy a list of flow deployments to Prefect.
+    Deploy flows using the provided deployment function.
 
     Args:
-        deployments: List of deployment configurations
+        deploy_func: Function that deploys flows and returns count
         description: Description of what's being deployed
     """
     print(f"\n{'=' * 80}")
     print(f"Deploying {description}")
     print(f"{'=' * 80}\n")
 
-    deployed_count = 0
-    failed_count = 0
-
-    for deployment in deployments:
-        try:
-            print(f"Deploying: {deployment.name}...")
-            deployment_id = deployment.apply()
-            print(f"  ✓ Successfully deployed: {deployment.name}")
-            print(f"    Deployment ID: {deployment_id}")
-            deployed_count += 1
-        except Exception as e:
-            print(f"  ✗ Failed to deploy: {deployment.name}")
-            print(f"    Error: {e}")
-            failed_count += 1
-
-    print(f"\n{'=' * 80}")
-    print(f"Deployment Summary:")
-    print(f"  Total: {len(deployments)}")
-    print(f"  Successful: {deployed_count}")
-    print(f"  Failed: {failed_count}")
-    print(f"{'=' * 80}\n")
-
-    return failed_count == 0
+    try:
+        count = deploy_func()
+        print(f"\n✓ Successfully deployed {count} {description}")
+        return True
+    except Exception as e:
+        print(f"\n✗ Failed to deploy {description}")
+        print(f"  Error: {e}")
+        return False
 
 
 def main():
@@ -111,32 +96,24 @@ def main():
         print("Use --help for usage information.")
         sys.exit(1)
 
-    # Collect deployments based on arguments
-    all_deployments = []
+    # Deploy flows based on arguments
     success = True
 
     if args.all:
         print("\n🚀 Deploying all FundLens ETL flows...")
         print_schedule_summary()
-        all_deployments = create_all_deployments()
-        success = deploy_flows(all_deployments, "All Flows")
+        success = deploy_flows(create_all_deployments, "All Flows")
     else:
         if args.bronze:
-            bronze_deployments = create_bronze_deployments()
-            all_deployments.extend(bronze_deployments)
-            if not deploy_flows(bronze_deployments, "Bronze Ingestion Flows"):
+            if not deploy_flows(create_bronze_deployments, "Bronze Ingestion Flows"):
                 success = False
 
         if args.silver:
-            silver_deployments = create_silver_deployments()
-            all_deployments.extend(silver_deployments)
-            if not deploy_flows(silver_deployments, "Silver Transformation Flows"):
+            if not deploy_flows(create_silver_deployments, "Silver Transformation Flows"):
                 success = False
 
         if args.gold:
-            gold_deployments = create_gold_deployments()
-            all_deployments.extend(gold_deployments)
-            if not deploy_flows(gold_deployments, "Gold Transformation Flows"):
+            if not deploy_flows(create_gold_deployments, "Gold Transformation Flows"):
                 success = False
 
     # Final summary
