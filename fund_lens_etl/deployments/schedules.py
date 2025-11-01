@@ -37,10 +37,12 @@ def create_bronze_deployments():
     from fund_lens_etl.flows.bronze_ingestion_flow import bronze_ingestion_flow
 
     # Daily incremental extraction (weekdays only)
-    bronze_ingestion_flow.deploy(
+    bronze_ingestion_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/bronze_ingestion_flow.py:bronze_ingestion_flow",
+    ).deploy(
         name="bronze-ingestion-daily-incremental",
         work_pool_name="default",
-        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -55,10 +57,12 @@ def create_bronze_deployments():
     )
 
     # Monthly full refresh (first Sunday of each month)
-    bronze_ingestion_flow.deploy(
+    bronze_ingestion_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/bronze_ingestion_flow.py:bronze_ingestion_flow",
+    ).deploy(
         name="bronze-ingestion-monthly-full-refresh",
         work_pool_name="default",
-        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -89,10 +93,12 @@ def create_silver_deployments():
     from fund_lens_etl.flows.silver_transformation_flow import silver_transformation_flow
 
     # Daily silver transformation (runs after bronze ingestion)
-    silver_transformation_flow.deploy(
+    silver_transformation_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/silver_transformation_flow.py:silver_transformation_flow",
+    ).deploy(
         name="silver-transformation-daily",
         work_pool_name="default",
-        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -108,10 +114,12 @@ def create_silver_deployments():
     )
 
     # Monthly silver transformation (after monthly full refresh)
-    silver_transformation_flow.deploy(
+    silver_transformation_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/silver_transformation_flow.py:silver_transformation_flow",
+    ).deploy(
         name="silver-transformation-monthly",
         work_pool_name="default",
-        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -143,10 +151,12 @@ def create_gold_deployments():
     from fund_lens_etl.flows.gold_transformation_flow import gold_transformation_flow
 
     # Daily gold transformation (runs after silver transformation)
-    gold_transformation_flow.deploy(
+    gold_transformation_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/gold_transformation_flow.py:gold_transformation_flow",
+    ).deploy(
         name="gold-transformation-daily",
         work_pool_name="default",
-        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -162,10 +172,12 @@ def create_gold_deployments():
     )
 
     # Monthly gold transformation (after monthly silver)
-    gold_transformation_flow.deploy(
+    gold_transformation_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/gold_transformation_flow.py:gold_transformation_flow",
+    ).deploy(
         name="gold-transformation-monthly",
         work_pool_name="default",
-        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
