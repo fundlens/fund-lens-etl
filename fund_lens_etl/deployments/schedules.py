@@ -40,6 +40,7 @@ def create_bronze_deployments():
     bronze_ingestion_flow.deploy(
         name="bronze-ingestion-daily-incremental",
         work_pool_name="default",
+        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -57,6 +58,7 @@ def create_bronze_deployments():
     bronze_ingestion_flow.deploy(
         name="bronze-ingestion-monthly-full-refresh",
         work_pool_name="default",
+        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -90,6 +92,7 @@ def create_silver_deployments():
     silver_transformation_flow.deploy(
         name="silver-transformation-daily",
         work_pool_name="default",
+        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -108,6 +111,7 @@ def create_silver_deployments():
     silver_transformation_flow.deploy(
         name="silver-transformation-monthly",
         work_pool_name="default",
+        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -142,6 +146,7 @@ def create_gold_deployments():
     gold_transformation_flow.deploy(
         name="gold-transformation-daily",
         work_pool_name="default",
+        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -160,6 +165,7 @@ def create_gold_deployments():
     gold_transformation_flow.deploy(
         name="gold-transformation-monthly",
         work_pool_name="default",
+        build=False,  # Code is already on the filesystem
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
