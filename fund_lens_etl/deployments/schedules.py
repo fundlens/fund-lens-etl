@@ -7,6 +7,8 @@ This module defines scheduled deployments for:
 - Gold transformation (triggered after silver completes)
 """
 
+from prefect.client.schemas.schedules import CronSchedule
+
 from fund_lens_etl.config import USState
 
 # ============================================================================
@@ -43,8 +45,9 @@ def create_bronze_deployments():
             "election_cycle": DEFAULT_CYCLE,
             "full_refresh": False,
         },
-        cron="0 2 * * 1-5",  # 2 AM ET, Monday-Friday
-        timezone=TIMEZONE,
+        schedules=[
+            CronSchedule(cron="0 2 * * 1-5", timezone=TIMEZONE)  # 2 AM ET, Monday-Friday
+        ],
         tags=["etl", "bronze", "incremental", "daily"],
         description="Daily incremental extraction from FEC API with 90-day lookback",
         version="1.0.0",
@@ -59,8 +62,9 @@ def create_bronze_deployments():
             "election_cycle": DEFAULT_CYCLE,
             "full_refresh": True,
         },
-        cron="0 3 1-7 * 0",  # 3 AM ET, first Sunday of month
-        timezone=TIMEZONE,
+        schedules=[
+            CronSchedule(cron="0 3 1-7 * 0", timezone=TIMEZONE)  # 3 AM ET, first Sunday of month
+        ],
         tags=["etl", "bronze", "full-refresh", "monthly"],
         description="Monthly full refresh to catch late filings and corrections",
         version="1.0.0",
@@ -90,8 +94,11 @@ def create_silver_deployments():
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
         },
-        cron="30 2 * * 1-5",  # 2:30 AM ET, Monday-Friday (30 min after bronze)
-        timezone=TIMEZONE,
+        schedules=[
+            CronSchedule(
+                cron="30 2 * * 1-5", timezone=TIMEZONE
+            )  # 2:30 AM ET, Monday-Friday (30 min after bronze)
+        ],
         tags=["etl", "silver", "transformation", "daily"],
         description="Daily transformation of bronze data to silver layer",
         version="1.0.0",
@@ -105,8 +112,11 @@ def create_silver_deployments():
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
         },
-        cron="30 3 1-7 * 0",  # 3:30 AM ET, first Sunday of month (30 min after full refresh)
-        timezone=TIMEZONE,
+        schedules=[
+            CronSchedule(
+                cron="30 3 1-7 * 0", timezone=TIMEZONE
+            )  # 3:30 AM ET, first Sunday of month (30 min after full refresh)
+        ],
         tags=["etl", "silver", "transformation", "monthly"],
         description="Monthly transformation after full refresh",
         version="1.0.0",
@@ -136,8 +146,11 @@ def create_gold_deployments():
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
         },
-        cron="30 3 * * 1-5",  # 3:30 AM ET, Monday-Friday (1 hour after silver)
-        timezone=TIMEZONE,
+        schedules=[
+            CronSchedule(
+                cron="30 3 * * 1-5", timezone=TIMEZONE
+            )  # 3:30 AM ET, Monday-Friday (1 hour after silver)
+        ],
         tags=["etl", "gold", "analytics", "daily"],
         description="Daily transformation of silver data to gold analytics layer",
         version="1.0.0",
@@ -151,8 +164,11 @@ def create_gold_deployments():
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
         },
-        cron="30 4 1-7 * 0",  # 4:30 AM ET, first Sunday of month (1 hour after monthly silver)
-        timezone=TIMEZONE,
+        schedules=[
+            CronSchedule(
+                cron="30 4 1-7 * 0", timezone=TIMEZONE
+            )  # 4:30 AM ET, first Sunday of month (1 hour after monthly silver)
+        ],
         tags=["etl", "gold", "analytics", "monthly"],
         description="Monthly transformation after full refresh pipeline",
         version="1.0.0",
