@@ -46,6 +46,7 @@ def create_bronze_deployments():
         version="1.0.0",
         description="Daily incremental extraction from FEC API with 90-day lookback",
         tags=["etl", "bronze", "incremental", "daily"],
+        work_pool_name="default",
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -64,6 +65,7 @@ def create_bronze_deployments():
         version="1.0.0",
         description="Monthly full refresh to catch late filings and corrections",
         tags=["etl", "bronze", "full-refresh", "monthly"],
+        work_pool_name="default",
         parameters={
             "state": DEFAULT_STATE,
             "election_cycle": DEFAULT_CYCLE,
@@ -101,6 +103,7 @@ def create_silver_deployments():
         version="1.0.0",
         description="Daily transformation of bronze data to silver layer",
         tags=["etl", "silver", "transformation", "daily"],
+        work_pool_name="default",
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -118,6 +121,7 @@ def create_silver_deployments():
         version="1.0.0",
         description="Monthly transformation after full refresh",
         tags=["etl", "silver", "transformation", "monthly"],
+        work_pool_name="default",
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -154,6 +158,7 @@ def create_gold_deployments():
         version="1.0.0",
         description="Daily transformation of silver data to gold analytics layer",
         tags=["etl", "gold", "analytics", "daily"],
+        work_pool_name="default",
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
@@ -171,6 +176,7 @@ def create_gold_deployments():
         version="1.0.0",
         description="Monthly transformation after full refresh pipeline",
         tags=["etl", "gold", "analytics", "monthly"],
+        work_pool_name="default",
         parameters={
             "state": DEFAULT_STATE.value,
             "cycle": DEFAULT_CYCLE,
