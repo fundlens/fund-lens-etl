@@ -12,16 +12,16 @@ from datetime import date
 from typing import Any
 
 import pandas as pd
-from prefect import flow, task
-from sqlalchemy import select
-
-from fund_lens_etl.database import get_session
-from fund_lens_etl.models.bronze import BronzeFECCandidate, BronzeFECCommittee, BronzeFECScheduleA
-from fund_lens_etl.models.silver import (
+from fund_lens_models.bronze import BronzeFECCandidate, BronzeFECCommittee, BronzeFECScheduleA
+from fund_lens_models.silver import (
     SilverFECCandidate,
     SilverFECCommittee,
     SilverFECContribution,
 )
+from prefect import flow, task
+from sqlalchemy import select
+
+from fund_lens_etl.database import get_session
 from fund_lens_etl.transformers.bronze_to_silver import BronzeToSilverFECTransformer
 from fund_lens_etl.transformers.bronze_to_silver_entities import (
     BronzeToSilverCandidateTransformer,

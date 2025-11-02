@@ -2,11 +2,11 @@
 
 from datetime import date, timedelta
 
+from fund_lens_models.bronze.fec import BronzeFECExtractionState
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from fund_lens_etl.config import get_settings
-from fund_lens_etl.models.bronze.fec import BronzeFECExtractionState
 
 
 def get_extraction_state(
@@ -142,7 +142,7 @@ def get_last_contribution_info(
     Returns:
         Tuple of (last_contribution_date, last_sub_id) or None if no contributions
     """
-    from fund_lens_etl.models.bronze.fec import BronzeFECScheduleA
+    from fund_lens_models.bronze.fec import BronzeFECScheduleA
 
     stmt = (
         select(

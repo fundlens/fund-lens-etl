@@ -3,15 +3,15 @@
 import logging
 
 import pandas as pd
+from fund_lens_models.bronze.fec import (
+    BronzeFECCandidate,
+    BronzeFECCommittee,
+)
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from fund_lens_etl.models.bronze.fec import (
-    BronzeFECCandidate,
-    BronzeFECCommittee,
-)
 from fund_lens_etl.transformers.base import BaseTransformer
 
 
@@ -132,8 +132,6 @@ class BronzeToSilverFECTransformer(BaseTransformer):
             "contributor_first_name",
             "contributor_last_name",
             "contributor_city",
-            "contributor_employer",
-            "contributor_occupation",
             "committee_name",
         ]
 
@@ -142,6 +140,13 @@ class BronzeToSilverFECTransformer(BaseTransformer):
                 df[col] = df[col].astype(str).str.strip()
                 # Replace 'nan' string with actual None
                 df[col] = df[col].replace(["nan", "None", ""], None)
+
+        # Handle employer/occupation separately - use "NOT PROVIDED" instead of None
+        # to match model defaults (required for PACs which don't have this data)
+        for col in ["contributor_employer", "contributor_occupation"]:
+            if col in df.columns:
+                df[col] = df[col].astype(str).str.strip()
+                df[col] = df[col].replace(["nan", "None", ""], "NOT PROVIDED")
 
         # 5. Standardize state codes to uppercase
         if "contributor_state" in df.columns:
@@ -195,8 +200,8 @@ class BronzeToSilverFECTransformer(BaseTransformer):
         """
         logger = get_logger()
 
-        # Assert session is not None
-        assert self.session is not None, "Session is required for enrichment"
+        if self.session is None:
+            raise ValueError("Session is required for enrichment")
 
         logger.info("Enriching with committee data from bronze_fec_committee")
 
@@ -254,8 +259,8 @@ class BronzeToSilverFECTransformer(BaseTransformer):
         """
         logger = get_logger()
 
-        # Assert session is not None
-        assert self.session is not None, "Session is required for enrichment"
+        if self.session is None:
+            raise ValueError("Session is required for enrichment")
 
         logger.info("Enriching with candidate data from bronze_fec_candidate")
 

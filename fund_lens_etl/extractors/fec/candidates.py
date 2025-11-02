@@ -6,11 +6,12 @@ from typing import Any
 
 import pandas as pd
 import requests
+from fund_lens_models.enums import USState
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
 
 from fund_lens_etl.clients.fec import FECAPIClient
-from fund_lens_etl.config import USState, validate_election_cycle
+from fund_lens_etl.config import validate_election_cycle
 from fund_lens_etl.extractors.base import BaseExtractor
 
 

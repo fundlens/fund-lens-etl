@@ -5,13 +5,13 @@ from datetime import UTC, datetime
 from typing import cast
 
 import pandas as pd
+from fund_lens_models.gold import GoldCandidate, GoldCommittee, GoldContributor
+from fund_lens_models.silver.fec import SilverFECCandidate, SilverFECCommittee
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from fund_lens_etl.models.gold import GoldCandidate, GoldCommittee, GoldContributor
-from fund_lens_etl.models.silver.fec import SilverFECCandidate, SilverFECCommittee
 from fund_lens_etl.transformers.base import BaseTransformer
 
 

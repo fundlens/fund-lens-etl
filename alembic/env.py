@@ -8,22 +8,22 @@ from alembic import context
 
 # Import your models' metadata
 from fund_lens_etl.config import get_settings
-from fund_lens_etl.models.base import Base
+from fund_lens_models.base import Base
 
 # Import all models so Alembic can see them
-from fund_lens_etl.models.bronze import (
+from fund_lens_models.bronze import (
     BronzeFECCandidate,
     BronzeFECCommittee,
     BronzeFECExtractionState,
     BronzeFECScheduleA,
 )
-from fund_lens_etl.models.gold import (
+from fund_lens_models.gold import (
     GoldCandidate,
     GoldCommittee,
     GoldContribution,
     GoldContributor,
 )
-from fund_lens_etl.models.silver import (
+from fund_lens_models.silver import (
     SilverFECCandidate,
     SilverFECCommittee,
     SilverFECContribution,

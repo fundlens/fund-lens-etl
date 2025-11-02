@@ -11,22 +11,22 @@ Transforms Silver layer data into Gold layer (analytics-ready dimensional model)
 from typing import Any
 
 import pandas as pd
-from prefect import flow, get_run_logger, task
-from prefect.exceptions import MissingContextError
-from sqlalchemy import select
-
-from fund_lens_etl.database import get_session
-from fund_lens_etl.models.gold import (
+from fund_lens_models.gold import (
     GoldCandidate,
     GoldCommittee,
     GoldContribution,
     GoldContributor,
 )
-from fund_lens_etl.models.silver import (
+from fund_lens_models.silver import (
     SilverFECCandidate,
     SilverFECCommittee,
     SilverFECContribution,
 )
+from prefect import flow, get_run_logger, task
+from prefect.exceptions import MissingContextError
+from sqlalchemy import select
+
+from fund_lens_etl.database import get_session
 
 # Retry configuration for transformation tasks
 GOLD_RETRY_CONFIG = {

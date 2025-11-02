@@ -4,17 +4,17 @@ import logging
 from datetime import UTC, datetime
 
 import pandas as pd
+from fund_lens_models.bronze import (
+    BronzeFECCandidate,
+    BronzeFECCommittee,
+    BronzeFECScheduleA,
+)
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from fund_lens_etl.loaders.base import BaseLoader
-from fund_lens_etl.models.bronze.fec import (
-    BronzeFECCandidate,
-    BronzeFECCommittee,
-    BronzeFECScheduleA,
-)
 
 
 def get_logger():

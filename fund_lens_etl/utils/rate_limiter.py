@@ -26,7 +26,7 @@ class FECRateLimiter:
     Uses sliding window algorithm to track request timestamps.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize rate limiter with empty request queues."""
         self.settings = get_settings()
 

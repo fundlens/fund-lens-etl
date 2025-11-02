@@ -13,10 +13,10 @@ from datetime import date
 from typing import Any
 
 import pandas as pd
+from fund_lens_models.enums import USState
 from prefect import flow, task
 
 from fund_lens_etl.clients.fec import FECAPIClient
-from fund_lens_etl.config import USState
 from fund_lens_etl.database import get_session
 from fund_lens_etl.extractors.fec import (
     FECCandidateExtractor,

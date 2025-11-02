@@ -7,9 +7,8 @@ This module defines scheduled deployments for:
 - Gold transformation (triggered after silver completes)
 """
 
+from fund_lens_models.enums import USState
 from prefect.client.schemas.schedules import CronSchedule
-
-from fund_lens_etl.config import USState
 
 # ============================================================================
 # Deployment Parameters
