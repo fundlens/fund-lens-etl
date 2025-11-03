@@ -149,6 +149,8 @@ class SilverToGoldFECTransformer(BaseTransformer):
                 "committee_name": committee.name,
                 "committee_type": committee.committee_type,
                 "committee_designation": committee.designation,
+                "committee_party": committee.party,
+                "committee_candidate_id": committee.candidate_id,
                 "committee_state": committee.state,
                 "committee_city": committee.city,
             }
@@ -164,6 +166,12 @@ class SilverToGoldFECTransformer(BaseTransformer):
         )
         df["silver_committee_designation"] = df["committee_id"].map(
             lambda x: silver_committees.get(x, {}).get("committee_designation")
+        )
+        df["silver_committee_party"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_party")
+        )
+        df["silver_committee_candidate_id"] = df["committee_id"].map(
+            lambda x: silver_committees.get(x, {}).get("committee_candidate_id")
         )
         df["silver_committee_state"] = df["committee_id"].map(
             lambda x: silver_committees.get(x, {}).get("committee_state")
@@ -276,14 +284,27 @@ class SilverToGoldFECTransformer(BaseTransformer):
         if existing:
             return existing.id
 
+        # Resolve candidate_id from silver_committee_candidate_id if present
+        gold_candidate_id = None
+        silver_candidate_fec_id = row.get("silver_committee_candidate_id")
+        if pd.notna(silver_candidate_fec_id) and silver_candidate_fec_id:
+            # Look up the gold candidate by FEC ID
+            candidate_stmt = select(GoldCandidate).where(
+                GoldCandidate.fec_candidate_id == str(silver_candidate_fec_id)
+            )
+            candidate_result = self.session.execute(candidate_stmt)
+            gold_candidate = candidate_result.scalar_one_or_none()
+            if gold_candidate:
+                gold_candidate_id = gold_candidate.id
+
         # Create new committee using Silver data
         committee = GoldCommittee(
             name=str(row.get("silver_committee_name", "UNKNOWN")),
             committee_type=self._map_committee_type(row.get("silver_committee_designation")),
-            party=None,  # Party not in Silver committee (could add if needed)
+            party=row.get("silver_committee_party"),
             state=row.get("silver_committee_state"),
             city=row.get("silver_committee_city"),
-            candidate_id=None,  # Will be linked after candidate resolution
+            candidate_id=gold_candidate_id,
             fec_committee_id=committee_fec_id,
             is_active=True,
         )

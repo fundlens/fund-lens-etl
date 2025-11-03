@@ -63,6 +63,7 @@ class BronzeToSilverCommitteeTransformer(BaseTransformer):
             "name": "name",
             "committee_type": "committee_type",
             "designation": "designation",
+            "party": "party",
             "state": "state",
             "city": "city",
             "zip": "zip",
@@ -70,8 +71,11 @@ class BronzeToSilverCommitteeTransformer(BaseTransformer):
             "is_active": "is_active",
         }
 
-        # Select and rename columns
+        # Select and rename columns (including candidate_ids for processing)
         available_columns = [col for col in column_mapping if col in df.columns]
+        if "candidate_ids" in df.columns:
+            available_columns.append("candidate_ids")
+
         df = df[available_columns].rename(columns=column_mapping)
 
         # 2. Clean text fields
@@ -81,11 +85,25 @@ class BronzeToSilverCommitteeTransformer(BaseTransformer):
                 df[col] = df[col].astype(str).str.strip()
                 df[col] = df[col].replace(["nan", "None", ""], None)
 
-        # 3. Standardize state codes to uppercase
+        # 3. Extract primary candidate_id from candidate_ids array
+        if "candidate_ids" in df.columns:
+            df["candidate_id"] = df["candidate_ids"].apply(
+                lambda x: x[0] if isinstance(x, list) and len(x) > 0 else None
+            )
+            # Drop the candidate_ids column as we only need candidate_id
+            df = df.drop(columns=["candidate_ids"])
+        else:
+            df["candidate_id"] = None
+
+        # 4. Standardize state codes to uppercase
         if "state" in df.columns:
             df["state"] = df["state"].str.upper()
 
-        # 4. Normalize ZIP codes to 5 digits
+        # 5. Standardize party codes to uppercase
+        if "party" in df.columns:
+            df["party"] = df["party"].str.upper()
+
+        # 6. Normalize ZIP codes to 5 digits
         if "zip" in df.columns:
             df["zip"] = (
                 df["zip"]
@@ -95,7 +113,7 @@ class BronzeToSilverCommitteeTransformer(BaseTransformer):
                 .replace("", None)
             )
 
-        # 5. Add election_cycle from kwargs or infer
+        # 7. Add election_cycle from kwargs or infer
         election_cycle = kwargs.get("election_cycle")
         if election_cycle:
             df["election_cycle"] = election_cycle
@@ -104,11 +122,13 @@ class BronzeToSilverCommitteeTransformer(BaseTransformer):
             df["election_cycle"] = df["cycles"].apply(
                 lambda x: max(x) if isinstance(x, list) and len(x) > 0 else None
             )
+            # Drop cycles column after extracting election_cycle
+            df = df.drop(columns=["cycles"])
         else:
             logger.warning("No election_cycle provided and can't infer from data")
             df["election_cycle"] = None
 
-        # 6. Remove duplicates based on source_committee_id
+        # 8. Remove duplicates based on source_committee_id
         initial_count = len(df)
         df = df.drop_duplicates(subset=["source_committee_id"], keep="first")
         duplicates_removed = initial_count - len(df)
@@ -116,7 +136,7 @@ class BronzeToSilverCommitteeTransformer(BaseTransformer):
         if duplicates_removed > 0:
             logger.info(f"Removed {duplicates_removed} duplicate records")
 
-        # 7. Add metadata
+        # 9. Add metadata
         df["loaded_at"] = pd.Timestamp.now()
 
         logger.info(f"Transformation complete: {len(df)} clean records")
