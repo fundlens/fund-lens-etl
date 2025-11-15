@@ -10,10 +10,10 @@ It's designed for:
 from datetime import date
 from typing import TypedDict
 
+from fund_lens_models.enums import USState
 from prefect import flow, get_run_logger
 
 from fund_lens_etl.flows.bronze_ingestion_flow import bronze_ingestion_flow
-from fund_lens_etl.models import USState
 
 
 class PipelineSummary(TypedDict):
