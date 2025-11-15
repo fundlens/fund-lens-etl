@@ -8,6 +8,7 @@ Type=simple
 User=${VM_USER}
 WorkingDirectory=/opt/fund-lens-etl
 Environment="PATH=/opt/fund-lens-etl/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/fund-lens-etl/.env
 ExecStart=/opt/fund-lens-etl/.venv/bin/prefect server start --host 0.0.0.0
 Restart=always
 RestartSec=10

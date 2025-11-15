@@ -94,6 +94,7 @@ cat > .env << 'EOF'
 DATABASE_URL=postgresql://<database_username>:<db_password>@<postgres_fqdn>:5432/<database_name>
 FEC_API_KEY=<your_fec_api_key>
 PREFECT_API_URL=http://localhost:4200/api
+PREFECT_API_DATABASE_CONNECTION_URL=postgresql+asyncpg://<database_username>:<db_password>@<postgres_fqdn>:5432/<database_name>
 EOF
 ```
 
@@ -162,6 +163,8 @@ poetry run alembic upgrade head
 
 ## Step 10: Set Up Prefect Server Service
 
+**Important**: The Prefect server is configured to use PostgreSQL instead of SQLite (the default) to avoid database locking issues in production. The `PREFECT_API_DATABASE_CONNECTION_URL` environment variable in your `.env` file tells Prefect to use your PostgreSQL database.
+
 ```bash
 # Copy service file
 sudo cp /opt/fund-lens-etl/scripts/systemd/prefect-server.service /etc/systemd/system/
@@ -181,7 +184,7 @@ sudo systemctl status prefect-server.service
 sudo journalctl -u prefect-server -f
 ```
 
-Wait a few seconds for the Prefect server to start up.
+Wait a few seconds for the Prefect server to start up. On first start, Prefect will automatically create its tables in the PostgreSQL database.
 
 ## Step 11: Deploy Prefect Flows
 

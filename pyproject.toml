@@ -18,6 +18,7 @@ dependencies = [
     "requests (>=2.32.5,<3.0.0)",
     "pandas (>=2.3.3,<3.0.0)",
     "fund-lens-models @ git+https://github.com/fundlens/fund-lens-models.git@v0.1.1",
+    "asyncpg (>=0.30.0,<0.31.0)",
 ]
 
 
