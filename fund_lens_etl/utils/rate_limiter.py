@@ -4,6 +4,7 @@ import logging
 import time
 from collections import deque
 from datetime import datetime, timedelta
+from functools import lru_cache
 
 from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
@@ -134,3 +135,18 @@ class FECRateLimiter:
         """Clear all tracked requests (useful for testing)."""
         self.minute_requests.clear()
         self.hour_requests.clear()
+
+
+# Global singleton instance
+@lru_cache(maxsize=1)
+def get_rate_limiter() -> FECRateLimiter:
+    """
+    Get the global singleton rate limiter instance.
+
+    This ensures all FEC API clients share the same rate limiter across
+    the entire application, including across multiple Prefect subflows.
+
+    Returns:
+        Shared FECRateLimiter instance
+    """
+    return FECRateLimiter()

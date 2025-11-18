@@ -7,7 +7,7 @@ from prefect import get_run_logger
 from prefect.exceptions import MissingContextError
 
 from fund_lens_etl.config import get_settings
-from fund_lens_etl.utils.rate_limiter import FECRateLimiter
+from fund_lens_etl.utils.rate_limiter import get_rate_limiter
 
 
 def get_logger():
@@ -24,6 +24,9 @@ class FECAPIClient:
 
     Handles authentication, rate limiting, retries, and request execution.
     Shared by all FEC extractors.
+
+    Note: All instances share a singleton rate limiter to enforce global
+    rate limits across multiple subflows/tasks.
     """
 
     BASE_URL = "https://api.open.fec.gov/v1"
@@ -38,7 +41,7 @@ class FECAPIClient:
         """
         self.settings = get_settings()
         self.api_key = self.settings.fec_api_key
-        self.rate_limiter = FECRateLimiter()
+        self.rate_limiter = get_rate_limiter()  # Use singleton rate limiter
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 
