@@ -6,10 +6,11 @@ from fund_lens_etl.utils.extraction_state import (
     get_last_contribution_info,
     update_extraction_state,
 )
-from fund_lens_etl.utils.rate_limiter import FECRateLimiter
+from fund_lens_etl.utils.rate_limiter import FECRateLimiter, get_rate_limiter
 
 __all__ = [
     "FECRateLimiter",
+    "get_rate_limiter",
     "get_extraction_state",
     "calculate_incremental_start_date",
     "update_extraction_state",
