@@ -282,6 +282,7 @@ def process_committee_contributions_flow(
     start_date: date | None = None,
     end_date: date | None = None,
     full_refresh: bool = False,
+    lookback_days: int | None = None,
 ) -> dict[str, Any]:
     """
     Process all contributions for a single committee, page by page.
@@ -298,6 +299,8 @@ def process_committee_contributions_flow(
         start_date: Optional start date filter (overrides incremental calculation)
         end_date: Optional end date filter
         full_refresh: If True, ignores extraction state and does full load
+        lookback_days: Days to look back from last extraction (defaults to config value,
+                       use 0 for exact retry from last checkpoint)
 
     Returns:
         Summary statistics for this committee
@@ -318,12 +321,14 @@ def process_committee_contributions_flow(
                 session=session,
                 committee_id=committee_id,
                 election_cycle=election_cycle,
+                lookback_days=lookback_days,
             )
             if calculated_start_date:
                 is_incremental = True
+                lookback_info = f"{lookback_days} days" if lookback_days is not None else "default"
                 logger.info(
                     f"  Incremental extraction starting from {calculated_start_date} "
-                    f"(lookback from last extraction)"
+                    f"({lookback_info} lookback from last extraction)"
                 )
             else:
                 logger.info("  Full extraction (no previous state found)")
@@ -494,6 +499,7 @@ def bronze_ingestion_flow(
     end_date: date | None = None,
     committee_ids: list[str] | None = None,
     full_refresh: bool = False,
+    lookback_days: int | None = None,
 ) -> dict[str, Any]:
     """
     Main Bronze layer ingestion flow.
@@ -507,7 +513,7 @@ def bronze_ingestion_flow(
     - Full refresh (full_refresh=True): Extracts all data from the beginning
       Use for: Initial load, monthly reconciliation, data quality fixes
     - Incremental (full_refresh=False, default): Uses extraction state to determine
-      start date with 90-day lookback window to catch amendments
+      start date with lookback window to catch amendments (default 180 days)
       Use for: Daily/regular updates
 
     Args:
@@ -519,6 +525,8 @@ def bronze_ingestion_flow(
                       (if None, processes all candidate committees for the state)
         full_refresh: If True, forces full extraction ignoring extraction state
                      Default False (incremental mode)
+        lookback_days: Days to look back from last extraction (defaults to config value,
+                       use 0 for exact retry from last checkpoint)
 
     Returns:
         Summary statistics for the entire ingestion
@@ -591,6 +599,7 @@ def bronze_ingestion_flow(
             start_date=start_date,
             end_date=end_date,
             full_refresh=full_refresh,
+            lookback_days=lookback_days,
         )
 
         contribution_results.append(result)
@@ -632,6 +641,7 @@ def bronze_ingestion_flow(
                 start_date=start_date,
                 end_date=end_date,
                 full_refresh=False,  # Use incremental to resume from checkpoint
+                lookback_days=lookback_days,
             )
 
             retry_results.append(retry_result)

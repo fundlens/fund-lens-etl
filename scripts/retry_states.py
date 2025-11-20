@@ -9,8 +9,11 @@ Usage:
     # Retry with full refresh (default)
     poetry run python scripts/retry_states.py --states NY VA --cycle 2026 --full-refresh
 
-    # Retry with incremental (90-day lookback)
+    # Retry with incremental (default 180-day lookback)
     poetry run python scripts/retry_states.py --states CA --cycle 2026 --no-full-refresh
+
+    # Retry with exact resume from checkpoint (0-day lookback)
+    poetry run python scripts/retry_states.py --states CA --cycle 2026 --no-full-refresh --lookback-days 0
 
 Examples:
     # Current failed states from Nov 18 log
@@ -66,8 +69,11 @@ Examples:
   # Retry just California
   %(prog)s --states CA --cycle 2026
 
-  # Retry multiple states with incremental mode
+  # Retry multiple states with incremental mode (default 180-day lookback)
   %(prog)s --states NY TX FL --cycle 2026 --no-full-refresh
+
+  # Retry with exact resume from last checkpoint (0-day lookback)
+  %(prog)s --states NY TX FL --cycle 2026 --no-full-refresh --lookback-days 0
 
 Note: Silver and gold transformations will run separately on ALL states later.
         """,
@@ -95,7 +101,13 @@ Note: Silver and gold transformations will run separately on ALL states later.
         "--no-full-refresh",
         dest="full_refresh",
         action="store_false",
-        help="Use incremental mode (90-day lookback) instead of full refresh",
+        help="Use incremental mode (default 180-day lookback) instead of full refresh",
+    )
+    parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=None,
+        help="Days to look back from last extraction (default: 180 from config, use 0 for exact retry)",
     )
 
     return parser.parse_args()
@@ -114,7 +126,12 @@ def parse_state(state_code: str) -> USState:
         sys.exit(1)
 
 
-def run_bronze_ingest(states: list[USState], election_cycle: int, full_refresh: bool):
+def run_bronze_ingest(
+    states: list[USState],
+    election_cycle: int,
+    full_refresh: bool,
+    lookback_days: int | None = None,
+):
     """Run bronze ingestion for specified states."""
     logger.info("=" * 80)
     logger.info("BRONZE INGESTION - STATE RETRY")
@@ -123,6 +140,8 @@ def run_bronze_ingest(states: list[USState], election_cycle: int, full_refresh: 
     logger.info(f"Election Cycle: {election_cycle}")
     logger.info(f"States: {', '.join([s.value for s in states])} ({len(states)} total)")
     logger.info(f"Full Refresh: {full_refresh}")
+    if lookback_days is not None:
+        logger.info(f"Lookback Days: {lookback_days}")
     logger.info("=" * 80)
 
     failed_states = []
@@ -138,6 +157,7 @@ def run_bronze_ingest(states: list[USState], election_cycle: int, full_refresh: 
                 state=state,
                 election_cycle=election_cycle,
                 full_refresh=full_refresh,
+                lookback_days=lookback_days,
             )
 
             results[state.value] = result
@@ -175,6 +195,8 @@ def run_bronze_ingest(states: list[USState], election_cycle: int, full_refresh: 
         logger.info(f"  poetry run python scripts/retry_states.py \\")
         logger.info(f"    --states {' '.join(failed_states)} \\")
         logger.info(f"    --cycle {election_cycle}")
+        if lookback_days is not None:
+            logger.info(f"    --lookback-days {lookback_days}")
 
     logger.info("=" * 80)
 
@@ -197,6 +219,7 @@ def main():
         states=states,
         election_cycle=args.cycle,
         full_refresh=args.full_refresh,
+        lookback_days=args.lookback_days,
     )
 
     # Final summary
