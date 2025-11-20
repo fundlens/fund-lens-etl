@@ -83,6 +83,7 @@ def update_extraction_state(
     extraction_start_date: date | None,
     extraction_end_date: date | None,
     is_complete: bool = True,
+    last_page_processed: int = 0,
 ) -> BronzeFECExtractionState:
     """
     Update or create extraction state after successful extraction.
@@ -97,6 +98,7 @@ def update_extraction_state(
         extraction_start_date: Start date filter used (None for full)
         extraction_end_date: End date filter used (None for no limit)
         is_complete: Whether extraction completed successfully
+        last_page_processed: Last page number successfully processed
 
     Returns:
         Updated or created extraction state record
@@ -111,6 +113,7 @@ def update_extraction_state(
         state.extraction_start_date = extraction_start_date
         state.extraction_end_date = extraction_end_date
         state.is_complete = is_complete
+        state.last_page_processed = last_page_processed
     else:
         # Create new state
         state = BronzeFECExtractionState(
@@ -122,6 +125,7 @@ def update_extraction_state(
             extraction_start_date=extraction_start_date,
             extraction_end_date=extraction_end_date,
             is_complete=is_complete,
+            last_page_processed=last_page_processed,
         )
         session.add(state)
 

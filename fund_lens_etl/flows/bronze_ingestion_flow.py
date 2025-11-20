@@ -310,28 +310,49 @@ def process_committee_contributions_flow(
     logger = get_run_logger()
     logger.info(f"Processing contributions for {committee_name} ({committee_id})")
 
-    # Determine extraction start date
+    # Determine extraction start date and page
     calculated_start_date = start_date
+    starting_page = 1
     is_incremental = False
 
     if not full_refresh and start_date is None:
-        # Calculate incremental start date if not doing full refresh
+        # Check if there's an incomplete extraction to resume
         with get_session() as session:
-            calculated_start_date = calculate_incremental_start_date(
-                session=session,
-                committee_id=committee_id,
-                election_cycle=election_cycle,
-                lookback_days=lookback_days,
-            )
-            if calculated_start_date:
-                is_incremental = True
-                lookback_info = f"{lookback_days} days" if lookback_days is not None else "default"
+            from fund_lens_etl.utils.extraction_state import get_extraction_state
+
+            existing_state = get_extraction_state(session, committee_id, election_cycle)
+
+            # If incomplete extraction exists, resume from last page WITHOUT date filtering
+            if (
+                existing_state
+                and not existing_state.is_complete
+                and existing_state.last_page_processed > 0
+            ):
+                starting_page = existing_state.last_page_processed + 1
+                calculated_start_date = None  # Don't use date filter for resume
                 logger.info(
-                    f"  Incremental extraction starting from {calculated_start_date} "
-                    f"({lookback_info} lookback from last extraction)"
+                    f"  Resuming incomplete extraction from page {starting_page} "
+                    f"(last successful page: {existing_state.last_page_processed})"
                 )
             else:
-                logger.info("  Full extraction (no previous state found)")
+                # Calculate incremental start date if not resuming
+                calculated_start_date = calculate_incremental_start_date(
+                    session=session,
+                    committee_id=committee_id,
+                    election_cycle=election_cycle,
+                    lookback_days=lookback_days,
+                )
+                if calculated_start_date:
+                    is_incremental = True
+                    lookback_info = (
+                        f"{lookback_days} days" if lookback_days is not None else "default"
+                    )
+                    logger.info(
+                        f"  Incremental extraction starting from {calculated_start_date} "
+                        f"({lookback_info} lookback from last extraction)"
+                    )
+                else:
+                    logger.info("  Full extraction (no previous state found)")
     elif full_refresh:
         logger.info("  Full refresh requested - extracting all data")
     else:
@@ -343,7 +364,7 @@ def process_committee_contributions_flow(
     total_records = 0
     pages_processed = 0
     is_empty = False
-    last_successful_page = 0
+    last_successful_page = starting_page - 1  # Initialize to page before starting
     failed_on_page = None
 
     # Extract and load page by page
@@ -352,6 +373,7 @@ def process_committee_contributions_flow(
         election_cycle=election_cycle,
         start_date=calculated_start_date,
         end_date=end_date,
+        starting_page=starting_page,  # Resume from checkpoint if needed
         skip_on_error=True,  # Continue on errors and track them
     ):
         current_page = page_metadata.get("page", 0)
@@ -383,10 +405,11 @@ def process_committee_contributions_flow(
                         extraction_start_date=calculated_start_date,
                         extraction_end_date=end_date,
                         is_complete=False,  # Mark as incomplete for retry
+                        last_page_processed=last_successful_page,
                     )
                     logger.info(
                         f"Saved checkpoint: {total_records:,} records through page {last_successful_page}. "
-                        f"Will retry from last contribution date: {last_date}"
+                        f"Will retry from page {last_successful_page + 1}"
                     )
             # Stop processing this committee - will be retried later
             break
@@ -427,6 +450,7 @@ def process_committee_contributions_flow(
                         extraction_start_date=calculated_start_date,
                         extraction_end_date=end_date,
                         is_complete=False,  # Not complete yet
+                        last_page_processed=last_successful_page,
                     )
 
         # Log progress every 100 pages
@@ -462,10 +486,11 @@ def process_committee_contributions_flow(
                     extraction_start_date=calculated_start_date,
                     extraction_end_date=end_date,
                     is_complete=True,
+                    last_page_processed=last_successful_page,
                 )
                 logger.info(
                     f"  Updated extraction state: last_date={last_date}, "
-                    f"total_records={total_records}"
+                    f"total_records={total_records}, last_page={last_successful_page}"
                 )
 
     return {
