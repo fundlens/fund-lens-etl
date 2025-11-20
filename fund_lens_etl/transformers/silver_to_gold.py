@@ -88,7 +88,8 @@ class SilverToGoldFECTransformer(BaseTransformer):
                 # Create gold contribution record
                 gold_record = {
                     "source_system": "FEC",
-                    "source_transaction_id": row["sub_id"],
+                    "source_sub_id": row["source_sub_id"],  # Unique FEC record ID
+                    "source_transaction_id": row["transaction_id"],  # Links earmark pairs
                     "contribution_date": row["contribution_date"],
                     "amount": row["contribution_amount"],
                     "contributor_id": contributor_id,
@@ -359,7 +360,11 @@ class SilverToGoldFECTransformer(BaseTransformer):
 
     def _classify_contribution_type(self, row: pd.Series) -> str:
         """
-        Classify contribution type from receipt_type.
+        Classify contribution type from receipt_type and memo_code/memo_text.
+
+        Earmarked contributions (ActBlue, WinRed, etc.) are identified by:
+        - memo_code = 'X' AND
+        - memo_text contains earmark/conduit keywords
 
         Args:
             row: Silver contribution row
@@ -368,7 +373,21 @@ class SilverToGoldFECTransformer(BaseTransformer):
             Standardized contribution type
         """
         receipt_type = row.get("receipt_type", "")
+        memo_code = row.get("memo_code", "")
+        memo_text = str(row.get("memo_text", "")).upper()
 
+        # Check for earmarked contributions (conduits like ActBlue, WinRed)
+        # These have memo_code='X' and specific memo text patterns
+        if memo_code == "X":
+            earmark_patterns = [
+                "EARMARKED THROUGH THIS ORGANIZATION",
+                "TOTAL EARMARKED THROUGH CONDUIT",
+                "EARMARKED-CONDUIT DETAILS",
+            ]
+            if any(pattern in memo_text for pattern in earmark_patterns):
+                return "EARMARKED"
+
+        # Standard receipt_type mapping
         type_mapping = {
             "15": "DIRECT",
             "15E": "EARMARKED",
