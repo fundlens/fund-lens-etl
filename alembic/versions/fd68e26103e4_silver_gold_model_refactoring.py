@@ -29,7 +29,13 @@ def upgrade() -> None:
         ADD COLUMN IF NOT EXISTS memo_code VARCHAR(10)
     """)
 
-    # Step 2: Populate source_sub_id from source_transaction_id for existing records
+    # Step 2a: Add source_sub_id column to gold_contribution if it doesn't exist
+    op.execute("""
+        ALTER TABLE gold_contribution
+        ADD COLUMN IF NOT EXISTS source_sub_id VARCHAR(255)
+    """)
+
+    # Step 2b: Populate source_sub_id from source_transaction_id for existing records
     # NOTE: The old code had a bug where it used row["sub_id"] for source_transaction_id,
     # so source_transaction_id currently contains sub_id values. We copy these to source_sub_id.
     # This preserves the unique constraint but means existing data still has incorrect
@@ -119,6 +125,12 @@ def downgrade() -> None:
     op.execute("""
         ALTER TABLE silver_fec_contribution
         DROP COLUMN IF EXISTS memo_code
+    """)
+
+    # Step 6: Remove source_sub_id column from gold_contribution if it exists
+    op.execute("""
+        ALTER TABLE gold_contribution
+        DROP COLUMN IF EXISTS source_sub_id
     """)
 
     # ### end Alembic commands ###
