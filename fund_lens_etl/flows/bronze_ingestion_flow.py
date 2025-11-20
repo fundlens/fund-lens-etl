@@ -152,12 +152,16 @@ def extract_contributions_for_committee_task(
     all_contributions = []
 
     # Use the generator to fetch page by page
-    for page_df, _metadata in extractor.extract_schedule_a_pages(
+    for page_df, _metadata, error in extractor.extract_schedule_a_pages(
         committee_id=committee_id,
         election_cycle=election_cycle,
         start_date=start_date,
         end_date=end_date,
+        skip_on_error=False,  # Don't skip errors in this task - let it fail
     ):
+        if error:
+            # Error should have already raised an exception, but just in case
+            raise error
         all_contributions.append(page_df)
 
     # Concatenate all pages
@@ -268,7 +272,7 @@ def load_contributions_page_task(
 
 @flow(
     name="process_committee_contributions",
-    retries=1,  # Retry the whole committee if it fails
+    retries=0,  # Don't retry at flow level - API client handles page-level retries
     retry_delay_seconds=60,
 )
 def process_committee_contributions_flow(
@@ -334,14 +338,54 @@ def process_committee_contributions_flow(
     total_records = 0
     pages_processed = 0
     is_empty = False
+    last_successful_page = 0
+    failed_on_page = None
 
     # Extract and load page by page
-    for page_df, page_metadata in extractor.extract_schedule_a_pages(
+    for page_df, page_metadata, error in extractor.extract_schedule_a_pages(
         committee_id=committee_id,
         election_cycle=election_cycle,
         start_date=calculated_start_date,
         end_date=end_date,
+        skip_on_error=True,  # Continue on errors and track them
     ):
+        current_page = page_metadata.get("page", 0)
+
+        # Handle error case
+        if error is not None:
+            failed_on_page = current_page
+            logger.error(
+                f"Failed to fetch page {current_page} after all retries. "
+                f"Last successful page: {last_successful_page}. "
+                f"Error: {error}"
+            )
+            # Update state with partial progress before stopping
+            with get_session() as session:
+                last_contrib_info = get_last_contribution_info(
+                    session=session,
+                    committee_id=committee_id,
+                    election_cycle=election_cycle,
+                )
+                if last_contrib_info:
+                    last_date, last_sub_id = last_contrib_info
+                    update_extraction_state(
+                        session=session,
+                        committee_id=committee_id,
+                        election_cycle=election_cycle,
+                        last_contribution_date=last_date,
+                        last_sub_id=last_sub_id,
+                        total_records_extracted=total_records,
+                        extraction_start_date=calculated_start_date,
+                        extraction_end_date=end_date,
+                        is_complete=False,  # Mark as incomplete for retry
+                    )
+                    logger.info(
+                        f"Saved checkpoint: {total_records:,} records through page {last_successful_page}. "
+                        f"Will retry from last contribution date: {last_date}"
+                    )
+            # Stop processing this committee - will be retried later
+            break
+
         # Check if first page is empty - skip this committee
         if pages_processed == 0 and page_df.empty:
             logger.info(f"Committee {committee_name} has no contributions - skipping")
@@ -356,6 +400,29 @@ def process_committee_contributions_flow(
 
         total_records += result["records_loaded"]
         pages_processed += 1
+        last_successful_page = current_page
+
+        # Save checkpoint every 50 pages to track progress
+        if pages_processed % 50 == 0:
+            with get_session() as session:
+                last_contrib_info = get_last_contribution_info(
+                    session=session,
+                    committee_id=committee_id,
+                    election_cycle=election_cycle,
+                )
+                if last_contrib_info:
+                    last_date, last_sub_id = last_contrib_info
+                    update_extraction_state(
+                        session=session,
+                        committee_id=committee_id,
+                        election_cycle=election_cycle,
+                        last_contribution_date=last_date,
+                        last_sub_id=last_sub_id,
+                        total_records_extracted=total_records,
+                        extraction_start_date=calculated_start_date,
+                        extraction_end_date=end_date,
+                        is_complete=False,  # Not complete yet
+                    )
 
         # Log progress every 100 pages
         if pages_processed % 100 == 0:
@@ -405,6 +472,8 @@ def process_committee_contributions_flow(
         "is_incremental": is_incremental,
         "extraction_start_date": calculated_start_date,
         "extraction_end_date": end_date,
+        "failed_on_page": failed_on_page,  # Track if this committee needs retry
+        "is_complete": failed_on_page is None and not is_empty,  # Complete if no failure
     }
 
 
@@ -507,6 +576,7 @@ def bronze_ingestion_flow(
 
     # Process each committee
     contribution_results = []
+    failed_committees = []  # Track committees that failed for retry
 
     for idx, (_, committee) in enumerate(committees_to_process.iterrows(), start=1):
         logger.info(
@@ -525,12 +595,70 @@ def bronze_ingestion_flow(
 
         contribution_results.append(result)
 
+        # Track failed committees for retry
+        if not result.get("is_complete", False) and not result.get("is_empty", False):
+            failed_committees.append(
+                {
+                    "committee_id": committee["committee_id"],
+                    "committee_name": committee["name"],
+                    "failed_on_page": result.get("failed_on_page"),
+                    "partial_records": result.get("total_records", 0),
+                }
+            )
+            logger.warning(f"⚠️  Committee {committee['name']} incomplete - added to retry queue")
+
+    # ========================================================================
+    # STEP 4: Retry Failed Committees
+    # ========================================================================
+    retry_results = []
+    if failed_committees:
+        logger.info("\n" + "=" * 70)
+        logger.info(f"🔄 Retrying {len(failed_committees)} incomplete committees...")
+        logger.info("=" * 70)
+
+        for idx, failed_committee in enumerate(failed_committees, start=1):
+            logger.info(
+                f"\n[Retry {idx}/{len(failed_committees)}] "
+                f"Retrying {failed_committee['committee_name']} "
+                f"(failed on page {failed_committee['failed_on_page']}, "
+                f"had {failed_committee['partial_records']:,} records)..."
+            )
+
+            # Retry using incremental mode - will resume from last successful contribution
+            retry_result = process_committee_contributions_flow(
+                committee_id=failed_committee["committee_id"],
+                committee_name=failed_committee["committee_name"],
+                election_cycle=election_cycle,
+                start_date=start_date,
+                end_date=end_date,
+                full_refresh=False,  # Use incremental to resume from checkpoint
+            )
+
+            retry_results.append(retry_result)
+
+            if retry_result.get("is_complete", False):
+                logger.info(
+                    f"✅ Retry successful! Loaded {retry_result['total_records']:,} additional records"
+                )
+            else:
+                logger.error(f"❌ Retry failed again for {failed_committee['committee_name']}")
+
     # ========================================================================
     # Summary
     # ========================================================================
     total_contributions = sum(r["total_records"] for r in contribution_results)
     total_pages = sum(r["pages_processed"] for r in contribution_results)
     incremental_count = sum(1 for r in contribution_results if r.get("is_incremental", False))
+
+    # Add retry statistics and identify still-failed committees
+    retry_contributions = sum(r["total_records"] for r in retry_results)
+    successful_retries = sum(1 for r in retry_results if r.get("is_complete", False))
+    still_failed_committees = [
+        retry_results[i]
+        for i, result in enumerate(retry_results)
+        if not result.get("is_complete", False)
+    ]
+    still_failed = len(still_failed_committees)
 
     logger.info("\n" + "=" * 70)
     logger.info("Bronze Ingestion Complete!")
@@ -541,6 +669,50 @@ def bronze_ingestion_flow(
     logger.info(f"    - Full: {len(contribution_results) - incremental_count}")
     logger.info(f"  Total Contributions: {total_contributions:,}")
     logger.info(f"  Total Pages: {total_pages:,}")
+    if failed_committees:
+        logger.info("\n  Retry Summary:")
+        logger.info(f"    - Committees retried: {len(failed_committees)}")
+        logger.info(f"    - Successful retries: {successful_retries}")
+        logger.info(f"    - Still incomplete: {still_failed}")
+        logger.info(f"    - Additional contributions from retries: {retry_contributions:,}")
+        if still_failed > 0:
+            logger.warning(f"\n  ⚠️  {still_failed} committee(s) still incomplete after retry:")
+            # Get checkpoint details from database for each failed committee
+            with get_session() as session:
+                for failed in still_failed_committees:
+                    logger.warning(f"\n    - {failed['committee_name']} ({failed['committee_id']})")
+                    logger.warning(
+                        f"      Records loaded this run: {failed['total_records']:,}, "
+                        f"Pages: {failed['pages_processed']}, "
+                        f"Failed on page: {failed.get('failed_on_page', 'N/A')}"
+                    )
+
+                    # Get checkpoint info from extraction state
+                    from fund_lens_etl.utils.extraction_state import get_extraction_state
+
+                    state_info = get_extraction_state(
+                        session=session,
+                        committee_id=failed["committee_id"],
+                        election_cycle=election_cycle,
+                    )
+
+                    if state_info:
+                        logger.warning(
+                            f"      📍 Checkpoint: Last contribution date: {state_info.last_contribution_date}, "
+                            f"Sub ID: {state_info.last_sub_id}"
+                        )
+                        logger.warning(
+                            f"      Total records in DB: {state_info.total_contributions_extracted:,}, "
+                            f"Is complete: {state_info.is_complete}"
+                        )
+
+            logger.warning("\n  💡 To manually retry incomplete committees, run flow with:")
+            logger.warning(
+                f"     committee_ids=[{', '.join(repr(c['committee_id']) for c in still_failed_committees)}]"
+            )
+            logger.warning(
+                "     full_refresh=False  # Will auto-resume from last successful checkpoint"
+            )
     logger.info("=" * 70)
 
     return {
@@ -555,4 +727,10 @@ def bronze_ingestion_flow(
         "total_contributions": total_contributions,
         "total_pages": total_pages,
         "committee_details": contribution_results,
+        "retries_attempted": len(failed_committees),
+        "retries_successful": successful_retries if failed_committees else 0,
+        "retries_still_failed": still_failed if failed_committees else 0,
+        "retry_contributions": retry_contributions if failed_committees else 0,
+        "retry_details": retry_results,
+        "still_incomplete_committees": still_failed_committees,  # Full details including checkpoint info
     }
