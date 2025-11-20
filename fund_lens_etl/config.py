@@ -88,7 +88,11 @@ class Settings(BaseSettings):
     batch_size: int = 1000
 
     # Incremental Load Configuration
-    lookback_days: int = 90
+    # 180-day lookback accounts for:
+    # - Quarterly filing deadlines (~45 days after quarter end)
+    # - Late amendments to previous filings
+    # - FEC processing delays
+    lookback_days: int = 180
     sort_order: str = "asc"
 
     # Rate Limiting
