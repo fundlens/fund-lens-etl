@@ -96,6 +96,7 @@ class BronzeToSilverFECTransformer(BaseTransformer):
             "recipient_committee_designation": "committee_designation",
             "receipt_type": "receipt_type",
             "election_type": "election_type",
+            "memo_code": "memo_code",  # Preserve memo_code for earmark detection
             "memo_text": "memo_text",
             "two_year_transaction_period": "election_cycle",
             "report_year": "report_year",
