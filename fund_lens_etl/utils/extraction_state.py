@@ -44,11 +44,17 @@ def calculate_incremental_start_date(
     If extraction state exists, returns last_contribution_date - lookback_days.
     If no state exists, returns None (full extraction).
 
+    The lookback window accounts for:
+    - Quarterly FEC filing deadlines (up to 45 days after quarter end)
+    - Late amendments to previous filings
+    - FEC data processing delays
+    Default: 180 days (configured in settings)
+
     Args:
         session: SQLAlchemy session
         committee_id: FEC committee ID
         election_cycle: Election cycle year
-        lookback_days: Days to look back (defaults to config setting)
+        lookback_days: Days to look back (defaults to 180 from config)
 
     Returns:
         Start date for extraction, or None for full extraction
