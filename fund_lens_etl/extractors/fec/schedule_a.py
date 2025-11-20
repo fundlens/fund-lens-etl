@@ -56,7 +56,8 @@ class FECScheduleAExtractor(BaseExtractor):
         start_date: date | None = None,
         end_date: date | None = None,
         starting_page: int = 1,
-    ) -> Generator[tuple[pd.DataFrame, dict[str, Any]], None, None]:
+        skip_on_error: bool = False,
+    ) -> Generator[tuple[pd.DataFrame, dict[str, Any], Exception | None], None, None]:
         """
         Extract Schedule A (contributions) data page by page.
 
@@ -68,9 +69,11 @@ class FECScheduleAExtractor(BaseExtractor):
             start_date: Start date for contributions (inclusive)
             end_date: End date for contributions (inclusive)
             starting_page: Page number to start from (for resuming)
+            skip_on_error: If True, yields error info and continues to next page on failure
 
         Yields:
-            Tuple of (DataFrame with page data, pagination metadata)
+            Tuple of (DataFrame with page data, pagination metadata, error if any)
+            On error with skip_on_error=True: (empty DataFrame, metadata with error, exception)
         """
         logger = get_logger()
         election_cycle = validate_election_cycle(election_cycle)
@@ -113,9 +116,35 @@ class FECScheduleAExtractor(BaseExtractor):
 
             try:
                 data = self.api_client.get("/schedules/schedule_a/", params)
-            except requests.HTTPError as e:
-                logger.error(f"API request failed on page {page}: {e}")
-                raise
+            except (requests.HTTPError, requests.Timeout) as e:
+                if skip_on_error:
+                    logger.error(
+                        f"API request failed on page {page}: {e}. "
+                        f"Skipping this page and continuing..."
+                    )
+                    # Yield error info so caller can track failed pages
+                    error_metadata = {
+                        "page": page,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "cursor": {
+                            "last_index": last_index,
+                            "last_contribution_receipt_date": last_date,
+                        },
+                    }
+                    yield pd.DataFrame(), error_metadata, e
+
+                    # Try to continue to next page by incrementing cursor
+                    # Note: We can't get the real next cursor without the data,
+                    # so we'll have to stop here. Failed pages need to be retried separately.
+                    logger.warning(
+                        f"Cannot continue past failed page {page} without cursor data. "
+                        f"Stopping extraction."
+                    )
+                    break
+                else:
+                    logger.error(f"API request failed on page {page}: {e}")
+                    raise
 
             results = data.get("results", [])
             pagination = data.get("pagination", {})
@@ -146,8 +175,8 @@ class FECScheduleAExtractor(BaseExtractor):
                 f"Page {page}/{page_metadata['total_pages']}: {len(results)} records retrieved"
             )
 
-            # Yield this page's data
-            yield df, page_metadata
+            # Yield this page's data with no error
+            yield df, page_metadata, None
 
             # Get cursor for next page
             last_indexes = pagination.get("last_indexes", {})

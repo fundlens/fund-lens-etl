@@ -31,19 +31,21 @@ class FECAPIClient:
 
     BASE_URL = "https://api.open.fec.gov/v1"
 
-    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0):
+    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0, timeout_retries: int = 6):
         """
         Initialize FEC API client.
 
         Args:
             max_retries: Maximum number of retry attempts for failed requests
             retry_delay: Initial delay between retries (seconds), doubles each retry
+            timeout_retries: Maximum number of retry attempts specifically for timeout errors
         """
         self.settings = get_settings()
         self.api_key = self.settings.fec_api_key
         self.rate_limiter = get_rate_limiter()  # Use singleton rate limiter
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.timeout_retries = timeout_retries
 
     def get(self, endpoint: str, params: dict[str, Any]) -> dict[str, Any]:
         """
@@ -51,6 +53,7 @@ class FECAPIClient:
 
         Implements exponential backoff for transient failures (timeouts, 5xx errors).
         Does NOT retry on 4xx errors (client errors like invalid parameters).
+        Uses extended retries specifically for timeout errors.
 
         Args:
             endpoint: API endpoint path (e.g., '/schedules/schedule_a/')
@@ -69,8 +72,10 @@ class FECAPIClient:
         params["api_key"] = self.api_key
 
         last_exception: Exception | None = None
+        # Use max of max_retries and timeout_retries to ensure we can handle both
+        max_attempts = max(self.max_retries, self.timeout_retries)
 
-        for attempt in range(self.max_retries + 1):  # +1 for initial attempt
+        for attempt in range(max_attempts + 1):  # +1 for initial attempt
             try:
                 # Wait if needed to respect rate limits
                 self.rate_limiter.wait_if_needed()
@@ -78,6 +83,23 @@ class FECAPIClient:
                 response = requests.get(url, params=params, timeout=30)
                 response.raise_for_status()
                 return response.json()
+
+            except requests.Timeout as e:
+                # Special handling for timeout errors - use extended retry count
+                last_exception = e
+
+                if attempt < self.timeout_retries:
+                    delay = self.retry_delay * (2**attempt)
+                    logger.warning(
+                        f"Request timed out on attempt {attempt + 1}/{self.timeout_retries + 1} "
+                        f"for {endpoint}: {e}. Retrying in {delay}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(
+                        f"Request failed after {self.timeout_retries + 1} attempts for {endpoint}: {e}"
+                    )
+                    raise
 
             except requests.HTTPError as e:
                 last_exception = e
