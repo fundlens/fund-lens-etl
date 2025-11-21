@@ -77,6 +77,10 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         # Read entire file (committees are small, ~17K records)
         df = read_bulk_file(file_path, header_file_path)
 
+        # Keep only columns we're mapping (drop CONNECTED_ORG_NM, CAND_ID, etc.)
+        columns_to_keep = list(self.COLUMN_MAPPING.keys())
+        df = df[columns_to_keep]
+
         # Rename columns to match API format
         df = df.rename(columns=self.COLUMN_MAPPING)
 
@@ -110,6 +114,10 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         logger.info(f"Extracting committees from bulk file in chunks: {file_path}")
 
         for chunk in read_bulk_file_chunked(file_path, header_file_path, chunksize):
+            # Keep only columns we're mapping
+            columns_to_keep = list(self.COLUMN_MAPPING.keys())
+            chunk = chunk[columns_to_keep]
+
             # Rename columns to match API format
             chunk = chunk.rename(columns=self.COLUMN_MAPPING)
 
