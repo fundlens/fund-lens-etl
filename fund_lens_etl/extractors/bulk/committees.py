@@ -29,6 +29,8 @@ class BulkFECCommitteeExtractor(BaseExtractor):
     """Extract committee data from FEC bulk files."""
 
     # Mapping from bulk file columns to API/Bronze table columns
+    # Note: Bulk file has CONNECTED_ORG_NM and CAND_ID which are not in the
+    # Bronze schema (API doesn't return them). We skip these columns.
     COLUMN_MAPPING = {
         "CMTE_ID": "committee_id",
         "CMTE_NM": "name",
@@ -43,8 +45,8 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         "CMTE_PTY_AFFILIATION": "party",
         "CMTE_FILING_FREQ": "filing_frequency",
         "ORG_TP": "organization_type",
-        "CONNECTED_ORG_NM": "connected_organization_name",
-        "CAND_ID": "candidate_id",
+        # Skipping CONNECTED_ORG_NM - not in Bronze schema
+        # Skipping CAND_ID - Bronze has candidate_ids (array) from API, not CAND_ID (single)
     }
 
     def get_source_name(self) -> str:
