@@ -166,6 +166,13 @@ class BulkFECCandidateExtractor(BaseExtractor):
         if "address_state" in df.columns:
             df["address_state"] = df["address_state"].str.upper()
 
+        # Format district as 2-character string (e.g., "01", "02")
+        # pandas may read as float (1.0) so convert properly
+        if "district" in df.columns:
+            df["district"] = df["district"].apply(
+                lambda x: f"{int(float(x)):02d}" if pd.notna(x) and x != "" else None
+            )
+
         # Convert pandas NaN to None for database compatibility
         df = df.where(pd.notna(df), None)
 
