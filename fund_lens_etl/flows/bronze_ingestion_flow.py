@@ -460,7 +460,8 @@ def process_committee_contributions_flow(
                 f"{total_records:,} records loaded"
             )
 
-    if not is_empty:
+    # Only update extraction state as complete if there were no failures
+    if not is_empty and failed_on_page is None:
         logger.info(
             f"Completed {committee_name}: "
             f"{pages_processed} pages, {total_records:,} contributions"
@@ -492,6 +493,12 @@ def process_committee_contributions_flow(
                     f"  Updated extraction state: last_date={last_date}, "
                     f"total_records={total_records}, last_page={last_successful_page}"
                 )
+    elif not is_empty and failed_on_page is not None:
+        logger.info(
+            f"Partially completed {committee_name}: "
+            f"{pages_processed} pages, {total_records:,} contributions "
+            f"(stopped at page {failed_on_page})"
+        )
 
     return {
         "committee_id": committee_id,
