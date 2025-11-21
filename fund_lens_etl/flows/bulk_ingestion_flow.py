@@ -131,7 +131,7 @@ def extract_candidates_from_bulk_task(
 def extract_contributions_from_bulk_task(
     data_file: Path,
     header_file: Path,
-    chunksize: int = 100_000,
+    chunksize: int = 10_000,
 ) -> dict[str, int]:
     """
     Extract and load individual contributions from bulk file in chunks.
@@ -139,23 +139,31 @@ def extract_contributions_from_bulk_task(
     The contribution file is very large (~9.2M records, 1.6GB).
     Processes in chunks to avoid memory issues.
 
+    OPTIMIZED: Checks which sub_id values already exist and only inserts new records.
+    This avoids slow UPSERT conflicts on millions of existing records.
+
     Args:
         data_file: Path to itcont.txt
         header_file: Path to indiv_header_file.csv
-        chunksize: Records per chunk (default 100K)
+        chunksize: Records per chunk (default 10K, smaller = faster with existing data)
 
     Returns:
-        Dict with total_records and chunks_processed
+        Dict with total_records, new_records, skipped_records, and chunks_processed
     """
+    from fund_lens_models.bronze import BronzeFECScheduleA
     from prefect import get_run_logger
+    from sqlalchemy import select
 
     logger = get_run_logger()
     logger.info(f"Extracting individual contributions from {data_file} in chunks of {chunksize:,}")
+    logger.info("OPTIMIZED MODE: Will skip records that already exist (checking sub_id)")
 
     extractor = BulkFECContributionExtractor()
     loader = BronzeFECScheduleALoader()
 
     total_records = 0
+    new_records = 0
+    skipped_existing = 0
     chunks_processed = 0
 
     # Process in chunks
@@ -164,26 +172,55 @@ def extract_contributions_from_bulk_task(
         header_file_path=header_file,
         chunksize=chunksize,
     ):
-        # Load this chunk to Bronze
-        with get_session() as session:
-            records_loaded = loader.load(session, chunk_df, source_system="FEC_BULK")
-
-        total_records += records_loaded
         chunks_processed += 1
+        chunk_size = len(chunk_df)
+        total_records += chunk_size
+
+        # Check which sub_id values already exist in the database
+        with get_session() as session:
+            # Get sub_ids from this chunk
+            chunk_sub_ids = chunk_df["sub_id"].tolist()
+
+            # Query which ones already exist
+            existing_sub_ids_query = select(BronzeFECScheduleA.sub_id).where(
+                BronzeFECScheduleA.sub_id.in_(chunk_sub_ids)
+            )
+            existing_sub_ids = set(session.execute(existing_sub_ids_query).scalars().all())
+
+            # Filter to only new records
+            new_records_df = chunk_df[~chunk_df["sub_id"].isin(existing_sub_ids)]
+            num_new = len(new_records_df)
+            num_existing = chunk_size - num_new
+
+            skipped_existing += num_existing
+
+            # Only load new records (skip UPSERT on existing)
+            if num_new > 0:
+                records_loaded = loader.load(session, new_records_df, source_system="FEC_BULK")
+                new_records += records_loaded
+            else:
+                records_loaded = 0
 
         # Log progress every 10 chunks
         if chunks_processed % 10 == 0:
             logger.info(
-                f"Progress: {chunks_processed} chunks processed, "
-                f"{total_records:,} total records loaded"
+                f"Progress: {chunks_processed} chunks, "
+                f"{total_records:,} processed, "
+                f"{new_records:,} new, "
+                f"{skipped_existing:,} skipped (already exist)"
             )
 
     logger.info(
-        f"Completed: {chunks_processed} chunks, {total_records:,} total contributions loaded"
+        f"Completed: {chunks_processed} chunks, "
+        f"{total_records:,} total processed, "
+        f"{new_records:,} new records inserted, "
+        f"{skipped_existing:,} existing records skipped"
     )
 
     return {
         "total_records": total_records,
+        "new_records": new_records,
+        "skipped_existing": skipped_existing,
         "chunks_processed": chunks_processed,
     }
 
@@ -204,7 +241,7 @@ def bulk_ingestion_flow(
     load_committees: bool = True,
     load_candidates: bool = True,
     load_contributions: bool = True,
-    contribution_chunksize: int = 100_000,
+    contribution_chunksize: int = 10_000,
 ) -> dict[str, Any]:
     """
     Main bulk file ingestion flow.
@@ -228,7 +265,7 @@ def bulk_ingestion_flow(
         load_committees: Whether to load committees (default: True)
         load_candidates: Whether to load candidates (default: True)
         load_contributions: Whether to load contributions (default: True)
-        contribution_chunksize: Records per chunk for contributions (default: 100K)
+        contribution_chunksize: Records per chunk for contributions (default: 10K, optimized for skipping existing records)
 
     Returns:
         Summary statistics for the ingestion
@@ -335,10 +372,13 @@ def bulk_ingestion_flow(
                 header_file=contribution_header,
                 chunksize=contribution_chunksize,
             )
-            results["contributions_loaded"] = contribution_results["total_records"]
+            results["contributions_loaded"] = contribution_results["new_records"]
+            results["contributions_skipped"] = contribution_results["skipped_existing"]
             results["contribution_chunks"] = contribution_results["chunks_processed"]
             logger.info(
-                f"✓ Loaded {contribution_results['total_records']:,} contributions "
+                f"✓ Processed {contribution_results['total_records']:,} contributions: "
+                f"{contribution_results['new_records']:,} new, "
+                f"{contribution_results['skipped_existing']:,} skipped (already exist) "
                 f"in {contribution_results['chunks_processed']} chunks"
             )
     else:
