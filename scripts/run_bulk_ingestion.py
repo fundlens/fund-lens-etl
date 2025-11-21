@@ -103,8 +103,8 @@ Expected directory structure:
     parser.add_argument(
         "--chunksize",
         type=int,
-        default=100_000,
-        help="Records per chunk for contributions (default: 100,000)",
+        default=10_000,
+        help="Records per chunk for contributions (default: 10,000, optimized for skipping existing records)",
     )
 
     return parser.parse_args()
