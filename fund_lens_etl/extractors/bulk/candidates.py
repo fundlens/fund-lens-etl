@@ -29,22 +29,23 @@ class BulkFECCandidateExtractor(BaseExtractor):
     """Extract candidate data from FEC bulk files."""
 
     # Mapping from bulk file columns to API/Bronze table columns
+    # Note: Matching API schema - address fields have "address_" prefix
     COLUMN_MAPPING = {
         "CAND_ID": "candidate_id",
         "CAND_NAME": "name",
         "CAND_PTY_AFFILIATION": "party",
-        "CAND_ELECTION_YR": "election_year",
+        # Skip CAND_ELECTION_YR - API has election_years (array), not election_year (single)
         "CAND_OFFICE_ST": "state",
         "CAND_OFFICE": "office",
         "CAND_OFFICE_DISTRICT": "district",
-        "CAND_ICI": "incumbent_challenger_status",
+        "CAND_ICI": "incumbent_challenge",  # API uses "incumbent_challenge" not "incumbent_challenger_status"
         "CAND_STATUS": "candidate_status",
-        "CAND_PCC": "principal_committee_id",
-        "CAND_ST1": "street_1",
-        "CAND_ST2": "street_2",
-        "CAND_CITY": "city",
-        "CAND_ST": "candidate_state",
-        "CAND_ZIP": "zip",
+        # Skip CAND_PCC (principal_committee_id) - not in Bronze schema from API
+        "CAND_ST1": "address_street_1",  # API prefixes with "address_"
+        "CAND_ST2": "address_street_2",
+        "CAND_CITY": "address_city",
+        "CAND_ST": "address_state",
+        "CAND_ZIP": "address_zip",
     }
 
     def get_source_name(self) -> str:
@@ -74,6 +75,10 @@ class BulkFECCandidateExtractor(BaseExtractor):
 
         # Read entire file (candidates are small, ~6K records)
         df = read_bulk_file(file_path, header_file_path)
+
+        # Keep only columns we're mapping
+        columns_to_keep = list(self.COLUMN_MAPPING.keys())
+        df = df[columns_to_keep]
 
         # Rename columns to match API format
         df = df.rename(columns=self.COLUMN_MAPPING)
@@ -108,6 +113,10 @@ class BulkFECCandidateExtractor(BaseExtractor):
         logger.info(f"Extracting candidates from bulk file in chunks: {file_path}")
 
         for chunk in read_bulk_file_chunked(file_path, header_file_path, chunksize):
+            # Keep only columns we're mapping
+            columns_to_keep = list(self.COLUMN_MAPPING.keys())
+            chunk = chunk[columns_to_keep]
+
             # Rename columns to match API format
             chunk = chunk.rename(columns=self.COLUMN_MAPPING)
 
@@ -129,8 +138,8 @@ class BulkFECCandidateExtractor(BaseExtractor):
         df = df.copy()
 
         # Standardize ZIP codes (5 digits only)
-        if "zip" in df.columns:
-            df["zip"] = df["zip"].apply(standardize_zip_code)
+        if "address_zip" in df.columns:
+            df["address_zip"] = df["address_zip"].apply(standardize_zip_code)
 
         # Clean text fields (trim whitespace, convert empty to None)
         text_fields = [
@@ -139,12 +148,12 @@ class BulkFECCandidateExtractor(BaseExtractor):
             "state",
             "office",
             "district",
-            "incumbent_challenger_status",
+            "incumbent_challenge",
             "candidate_status",
-            "street_1",
-            "street_2",
-            "city",
-            "candidate_state",
+            "address_street_1",
+            "address_street_2",
+            "address_city",
+            "address_state",
         ]
 
         for field in text_fields:
@@ -154,12 +163,8 @@ class BulkFECCandidateExtractor(BaseExtractor):
         # Uppercase state codes
         if "state" in df.columns:
             df["state"] = df["state"].str.upper()
-        if "candidate_state" in df.columns:
-            df["candidate_state"] = df["candidate_state"].str.upper()
-
-        # Convert election year to integer
-        if "election_year" in df.columns:
-            df["election_year"] = pd.to_numeric(df["election_year"], errors="coerce")
+        if "address_state" in df.columns:
+            df["address_state"] = df["address_state"].str.upper()
 
         # Convert pandas NaN to None for database compatibility
         df = df.where(pd.notna(df), None)
