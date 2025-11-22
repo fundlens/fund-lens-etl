@@ -506,14 +506,24 @@ def transform_contributions_task(
         logger.info(f"Cached {len(candidate_cache)} candidates")
 
         # Build query for silver contributions
-        stmt = select(SilverFECContribution)
+        # OPTIMIZATION: Use NOT EXISTS to only select Silver records not yet in Gold
+        # This prevents re-transforming millions of already-processed records
+        subquery = (
+            select(GoldContribution.source_sub_id)
+            .where(
+                GoldContribution.source_system == "FEC",
+                GoldContribution.source_sub_id == SilverFECContribution.source_sub_id,
+            )
+            .exists()
+        )
+        stmt = select(SilverFECContribution).where(~subquery)
 
         # Apply filters if provided
         if cycle:
             stmt = stmt.where(SilverFECContribution.election_cycle == cycle)
 
-        # Get total count for progress tracking
-        count_stmt = select(func.count()).select_from(SilverFECContribution)
+        # Get total count for progress tracking (only count records not yet in Gold)
+        count_stmt = select(func.count()).select_from(SilverFECContribution).where(~subquery)
         if cycle:
             count_stmt = count_stmt.where(SilverFECContribution.election_cycle == cycle)
 

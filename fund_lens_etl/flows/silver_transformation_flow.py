@@ -283,7 +283,7 @@ def transform_candidates_task(
     name="transform_contributions",
     retries=SILVER_RETRY_CONFIG["retries"],
     retry_delay_seconds=SILVER_RETRY_CONFIG["retry_delay_seconds"],
-    timeout_seconds=SILVER_TASK_TIMEOUT * 4,  # 2 hours for large datasets
+    timeout_seconds=SILVER_TASK_TIMEOUT * 30,  # 15 hours for initial 9.2M record backfill
 )
 def transform_contributions_task(
     state: str | None = None,
@@ -315,7 +315,14 @@ def transform_contributions_task(
 
     with get_session() as session:
         # Build base query with filters
-        stmt = select(BronzeFECScheduleA)
+        # OPTIMIZATION: Use NOT EXISTS to only select Bronze records not yet in Silver
+        # This prevents re-transforming millions of already-processed records
+        subquery = (
+            select(SilverFECContribution.source_sub_id)
+            .where(SilverFECContribution.source_sub_id == BronzeFECScheduleA.sub_id)
+            .exists()
+        )
+        stmt = select(BronzeFECScheduleA).where(~subquery)
 
         if cycle:
             stmt = stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
@@ -324,8 +331,8 @@ def transform_contributions_task(
         if end_date:
             stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date <= end_date)
 
-        # Get total count for progress tracking
-        count_stmt = select(func.count()).select_from(BronzeFECScheduleA)
+        # Get total count for progress tracking (only count records not yet in Silver)
+        count_stmt = select(func.count()).select_from(BronzeFECScheduleA).where(~subquery)
         if cycle:
             count_stmt = count_stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
         if start_date:
