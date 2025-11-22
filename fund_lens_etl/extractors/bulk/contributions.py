@@ -148,6 +148,10 @@ class BulkFECContributionExtractor(BaseExtractor):
         # Parse contribution date (MMDDYYYY format)
         if "contribution_receipt_date" in df.columns:
             df["contribution_receipt_date"] = df["contribution_receipt_date"].apply(parse_fec_date)
+            # Convert NaT to None for PostgreSQL compatibility
+            df["contribution_receipt_date"] = df["contribution_receipt_date"].where(
+                df["contribution_receipt_date"].notna(), None
+            )
 
         # Convert contribution amount to float
         if "contribution_receipt_amount" in df.columns:
