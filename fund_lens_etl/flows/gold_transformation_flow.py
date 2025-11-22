@@ -582,10 +582,10 @@ def transform_contributions_task(
                         unresolved_candidates += 1
                         # Don't skip - candidate FK is optional
 
-                # Check if contribution already exists (by source_sub_id)
+                # Check if contribution already exists (by transaction_id)
                 lookup_stmt = select(GoldContribution.id).where(
                     GoldContribution.source_system == "FEC",
-                    GoldContribution.source_transaction_id == row["source_sub_id"],
+                    GoldContribution.source_transaction_id == row["transaction_id"],
                 )
                 existing_id = session.execute(lookup_stmt).scalar_one_or_none()
 
@@ -619,7 +619,7 @@ def transform_contributions_task(
                         contribution_type=row.get("receipt_type") or "DIRECT",
                         election_type=row.get("election_type"),
                         source_system="FEC",
-                        source_transaction_id=row["source_sub_id"],
+                        source_transaction_id=row["transaction_id"],
                         election_year=row.get("election_cycle", 2026),
                         election_cycle=row.get("election_cycle", 2026),
                         memo_text=row.get("memo_text"),
