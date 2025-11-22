@@ -86,7 +86,11 @@ def transform_committees_task(
 
         if cycle:
             bronze_committees = [
-                c for c in bronze_committees if c.raw_json and cycle in c.raw_json.get("cycles", [])
+                c
+                for c in bronze_committees
+                if c.cycles
+                and cycle in c.cycles
+                or (c.raw_json and cycle in c.raw_json.get("cycles", []))
             ]
 
         if not bronze_committees:
