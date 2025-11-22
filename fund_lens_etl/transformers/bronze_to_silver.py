@@ -182,12 +182,46 @@ class BronzeToSilverFECTransformer(BaseTransformer):
         if duplicates_removed > 0:
             logger.info(f"Removed {duplicates_removed} duplicate records")
 
-        # 10. Add metadata
-        df["loaded_at"] = pd.Timestamp.now()
+        # 10. Filter out invalid records (missing critical required fields)
+        initial_count = len(df)
 
-        logger.info(f"Transformation complete: {len(df)} clean records")
+        # Records must have these critical fields to be valid contributions
+        required_fields = {
+            "contribution_date": "contribution date",
+            "contribution_amount": "contribution amount",
+            "contributor_name": "contributor name",
+            "committee_id": "committee ID",
+        }
 
-        return df
+        invalid_mask = pd.Series([False] * len(df), index=df.index)
+        invalid_reasons = {}
+
+        for field, field_name in required_fields.items():
+            if field in df.columns:
+                field_invalid = df[field].isna()
+                invalid_mask = invalid_mask | field_invalid
+
+                # Track which records are invalid for this field
+                invalid_count = field_invalid.sum()
+                if invalid_count > 0:
+                    invalid_reasons[field_name] = invalid_count
+
+        # Filter out invalid records
+        valid_df = df[~invalid_mask].copy()
+        invalid_count = len(df) - len(valid_df)
+
+        if invalid_count > 0:
+            reason_str = ", ".join(
+                [f"{count} missing {field}" for field, count in invalid_reasons.items()]
+            )
+            logger.warning(f"Filtered out {invalid_count} invalid records ({reason_str})")
+
+        # 11. Add metadata
+        valid_df["loaded_at"] = pd.Timestamp.now()
+
+        logger.info(f"Transformation complete: {len(valid_df)} clean records")
+
+        return valid_df
 
     def _enrich_with_committee_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
