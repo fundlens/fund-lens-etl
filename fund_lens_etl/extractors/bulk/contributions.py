@@ -104,7 +104,15 @@ class BulkFECContributionExtractor(BaseExtractor):
         chunk_num = 0
         total_rows = 0
 
-        for chunk in read_bulk_file_chunked(file_path, header_file_path, chunksize):
+        # Force date column to be read as string to prevent pandas from inferring as numeric
+        # This prevents loss of leading zeros and ensures parse_fec_date receives valid strings
+        dtype_spec = {
+            "TRANSACTION_DT": str,
+        }
+
+        for chunk in read_bulk_file_chunked(
+            file_path, header_file_path, chunksize, dtype=dtype_spec
+        ):
             chunk_num += 1
             total_rows += len(chunk)
 
