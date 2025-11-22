@@ -283,16 +283,19 @@ def transform_candidates_task(
     name="transform_contributions",
     retries=SILVER_RETRY_CONFIG["retries"],
     retry_delay_seconds=SILVER_RETRY_CONFIG["retry_delay_seconds"],
-    timeout_seconds=SILVER_TASK_TIMEOUT,
+    timeout_seconds=SILVER_TASK_TIMEOUT * 4,  # 2 hours for large datasets
 )
 def transform_contributions_task(
     state: str | None = None,
     cycle: int | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
+    chunksize: int = 10_000,
 ) -> dict[str, Any]:
     """
     Transform Bronze contributions to Silver with committee/candidate enrichment.
+
+    OPTIMIZED: Processes in chunks to avoid loading millions of records into memory.
 
     Args:
         state: Unused - kept for API compatibility. Bronze ingestion already filters
@@ -300,44 +303,47 @@ def transform_contributions_task(
         cycle: Optional election cycle filter (e.g., 2026)
         start_date: Optional start date filter
         end_date: Optional end date filter
+        chunksize: Number of records to process per chunk (default: 10,000)
 
     Returns:
         Dict with transformation stats
     """
-    with get_session() as session:
-        # Fetch all Bronze contributions
-        stmt = select(BronzeFECScheduleA)
-        bronze_contributions = session.execute(stmt).scalars().all()
+    from prefect import get_run_logger
+    from sqlalchemy import func
 
-        # Filter in Python
-        # Note: state parameter is not used here because bronze ingestion already
-        # filters to committees from the target state. We want ALL contributions
-        # to those committees regardless of contributor_state (out-of-state donors).
+    logger = get_run_logger()
+
+    with get_session() as session:
+        # Build base query with filters
+        stmt = select(BronzeFECScheduleA)
 
         if cycle:
-            bronze_contributions = [
-                c for c in bronze_contributions if c.two_year_transaction_period == cycle
-            ]
-
+            stmt = stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
         if start_date:
-            bronze_contributions = [
-                c
-                for c in bronze_contributions
-                if c.contribution_receipt_date and c.contribution_receipt_date >= start_date
-            ]
-
+            stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date >= start_date)
         if end_date:
-            bronze_contributions = [
-                c
-                for c in bronze_contributions
-                if c.contribution_receipt_date and c.contribution_receipt_date <= end_date
-            ]
+            stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date <= end_date)
 
-        if not bronze_contributions:
+        # Get total count for progress tracking
+        count_stmt = select(func.count()).select_from(BronzeFECScheduleA)
+        if cycle:
+            count_stmt = count_stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
+        if start_date:
+            count_stmt = count_stmt.where(
+                BronzeFECScheduleA.contribution_receipt_date >= start_date
+            )
+        if end_date:
+            count_stmt = count_stmt.where(BronzeFECScheduleA.contribution_receipt_date <= end_date)
+
+        total_count = session.execute(count_stmt).scalar()
+        logger.info(f"Processing {total_count:,} bronze contributions in chunks of {chunksize:,}")
+
+        if total_count == 0:
             return {
                 "bronze_records": 0,
                 "silver_records": 0,
                 "skipped": 0,
+                "chunks_processed": 0,
             }
 
         # Get all column names from Bronze model (excluding metadata)
@@ -355,60 +361,105 @@ def transform_contributions_task(
             if col.name not in exclude_cols
         ]
 
-        # Convert to DataFrame
-        bronze_df = pd.DataFrame(
-            [{col: getattr(c, col) for col in bronze_cols} for c in bronze_contributions]
-        )
-
-        # Transform with session for enrichment (transformer handles JOINs)
-        transformer = BronzeToSilverFECTransformer(session=session)
-        silver_df = transformer.transform(bronze_df)
-
         # Get valid Silver model columns
         valid_columns = {col.name for col in SilverFECContribution.__table__.columns.values()}
         valid_columns.discard("id")
         valid_columns.discard("created_at")
         valid_columns.discard("updated_at")
 
-        # Load to Silver with UPSERT logic
-        records_loaded = 0
-        for _, row in silver_df.iterrows():
-            row_dict = row.to_dict()
+        # Process in chunks
+        total_bronze = 0
+        total_silver = 0
+        chunks_processed = 0
+        offset = 0
 
-            # Map sub_id to source_sub_id for the Silver model
-            if "sub_id" in row_dict:
-                row_dict["source_sub_id"] = row_dict.pop("sub_id")
+        while offset < total_count:
+            # Fetch chunk
+            chunk_stmt = stmt.limit(chunksize).offset(offset)
+            bronze_chunk = session.execute(chunk_stmt).scalars().all()
 
-            # Filter to only valid columns
-            row_dict = {k: v for k, v in row_dict.items() if k in valid_columns}
+            if not bronze_chunk:
+                break
 
-            # Clean NaN values (convert to None for database)
-            row_dict = clean_nan_values(row_dict)
+            chunk_size = len(bronze_chunk)
+            total_bronze += chunk_size
 
-            # Check if record exists
-            existing = session.execute(
-                select(SilverFECContribution).where(
-                    SilverFECContribution.source_sub_id == row_dict["source_sub_id"]
+            # Convert to DataFrame
+            bronze_df = pd.DataFrame(
+                [{col: getattr(c, col) for col in bronze_cols} for c in bronze_chunk]
+            )
+
+            # Transform with session for enrichment (transformer handles JOINs)
+            transformer = BronzeToSilverFECTransformer(session=session)
+            silver_df = transformer.transform(bronze_df)
+
+            # Check which source_sub_ids already exist in Silver
+            chunk_sub_ids = silver_df["sub_id"].tolist()
+            existing_sub_ids_query = select(SilverFECContribution.source_sub_id).where(
+                SilverFECContribution.source_sub_id.in_(chunk_sub_ids)
+            )
+            existing_sub_ids = set(session.execute(existing_sub_ids_query).scalars().all())
+
+            # Separate new and existing records
+            new_records_df = silver_df[~silver_df["sub_id"].isin(existing_sub_ids)]
+            update_records_df = silver_df[silver_df["sub_id"].isin(existing_sub_ids)]
+
+            # Bulk insert new records
+            if len(new_records_df) > 0:
+                new_records = []
+                for _, row in new_records_df.iterrows():
+                    row_dict = row.to_dict()
+                    if "sub_id" in row_dict:
+                        row_dict["source_sub_id"] = row_dict.pop("sub_id")
+                    row_dict = {k: v for k, v in row_dict.items() if k in valid_columns}
+                    row_dict = clean_nan_values(row_dict)
+                    new_records.append(SilverFECContribution(**row_dict))
+
+                session.bulk_save_objects(new_records)
+                total_silver += len(new_records)
+
+            # Update existing records (slower, but fewer of these)
+            for _, row in update_records_df.iterrows():
+                row_dict = row.to_dict()
+                source_sub_id = row_dict.pop("sub_id") if "sub_id" in row_dict else None
+                row_dict = {k: v for k, v in row_dict.items() if k in valid_columns}
+                row_dict = clean_nan_values(row_dict)
+
+                existing = session.execute(
+                    select(SilverFECContribution).where(
+                        SilverFECContribution.source_sub_id == source_sub_id
+                    )
+                ).scalar_one_or_none()
+
+                if existing:
+                    for key, value in row_dict.items():
+                        if key != "source_sub_id":
+                            setattr(existing, key, value)
+                    total_silver += 1
+
+            session.commit()
+            chunks_processed += 1
+            offset += chunksize
+
+            # Log progress every 10 chunks
+            if chunks_processed % 10 == 0:
+                logger.info(
+                    f"Progress: {chunks_processed} chunks, "
+                    f"{total_bronze:,} processed, "
+                    f"{total_silver:,} loaded/updated"
                 )
-            ).scalar_one_or_none()
 
-            if existing:
-                # Update existing record
-                for key, value in row_dict.items():
-                    setattr(existing, key, value)
-            else:
-                # Insert new record
-                silver_contribution = SilverFECContribution(**row_dict)
-                session.add(silver_contribution)
-
-            records_loaded += 1
-
-        session.commit()
+        logger.info(
+            f"Completed: {chunks_processed} chunks, "
+            f"{total_bronze:,} bronze records, "
+            f"{total_silver:,} silver records"
+        )
 
         return {
-            "bronze_records": len(bronze_contributions),
-            "silver_records": records_loaded,
-            "skipped": len(bronze_contributions) - records_loaded,
+            "bronze_records": total_bronze,
+            "silver_records": total_silver,
+            "skipped": total_bronze - total_silver,
+            "chunks_processed": chunks_processed,
         }
 
 

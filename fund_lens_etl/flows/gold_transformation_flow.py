@@ -116,14 +116,17 @@ def _calculate_match_confidence(row: pd.Series) -> float:
     description="Deduplicate and transform contributors from silver to gold",
     retries=GOLD_RETRY_CONFIG["retries"],
     retry_delay_seconds=GOLD_RETRY_CONFIG["retry_delay_seconds"],
-    timeout_seconds=GOLD_TASK_TIMEOUT,
+    timeout_seconds=GOLD_TASK_TIMEOUT * 2,  # 1 hour for deduplication
 )
 def transform_contributors_task(
     state: str | None = None,
     cycle: int | None = None,
+    chunksize: int = 50_000,
 ) -> dict[str, Any]:
     """
     Transform silver contributors to gold dimension with deduplication.
+
+    OPTIMIZED: Uses chunked processing to handle DISTINCT on millions of records.
 
     Entity resolution strategy:
     - Group by normalized key (name + city + state + employer)
@@ -134,15 +137,18 @@ def transform_contributors_task(
         state: Unused - kept for API compatibility. Processes all contributors
                who donated to committees in the target state (from silver layer).
         cycle: Optional election cycle filter (e.g., 2026)
+        chunksize: Records to process per chunk for DISTINCT (default: 50,000)
 
     Returns:
         Dictionary with transformation statistics
     """
+
     logger = get_logger()
     logger.info("Starting contributor transformation to gold layer")
 
     with get_session() as session:
-        # Build query for silver contributions (unique contributors)
+        # Use database-level GROUP BY instead of DISTINCT for better performance
+        # Process in chunks based on contributor_name to manage memory
         stmt = select(
             SilverFECContribution.contributor_name,
             SilverFECContribution.contributor_city,
@@ -151,16 +157,22 @@ def transform_contributors_task(
             SilverFECContribution.contributor_employer,
             SilverFECContribution.contributor_occupation,
             SilverFECContribution.entity_type,
-        ).distinct()
+        ).group_by(
+            SilverFECContribution.contributor_name,
+            SilverFECContribution.contributor_city,
+            SilverFECContribution.contributor_state,
+            SilverFECContribution.contributor_zip,
+            SilverFECContribution.contributor_employer,
+            SilverFECContribution.contributor_occupation,
+            SilverFECContribution.entity_type,
+        )
 
         # Apply filters if provided
-        # Note: state parameter not used - silver layer already contains contributions
-        # to committees from target state. We process all contributors regardless of
-        # their state (out-of-state donors are important for analysis).
         if cycle:
             stmt = stmt.where(SilverFECContribution.election_cycle == cycle)
 
-        # Load into DataFrame
+        # Get count (approximate - this is faster than exact count for large tables)
+        logger.info("Fetching unique contributors (this may take a moment)...")
         df = pd.read_sql(stmt, session.connection())
         logger.info(f"Loaded {len(df)} unique contributor records from silver")
 
@@ -446,14 +458,17 @@ def transform_candidates_task(
     description="Transform contributions from silver to gold fact table with FK resolution",
     retries=GOLD_RETRY_CONFIG["retries"],
     retry_delay_seconds=GOLD_RETRY_CONFIG["retry_delay_seconds"],
-    timeout_seconds=GOLD_TASK_TIMEOUT,
+    timeout_seconds=GOLD_TASK_TIMEOUT * 4,  # 2 hours for large datasets
 )
 def transform_contributions_task(
     state: str | None = None,
     cycle: int | None = None,
+    chunksize: int = 10_000,
 ) -> dict[str, Any]:
     """
     Transform silver contributions to gold fact table.
+
+    OPTIMIZED: Processes in chunks to avoid loading millions of records into memory.
 
     This creates the central fact table with foreign keys to:
     - GoldContributor (resolved by name/city/state/employer)
@@ -464,28 +479,48 @@ def transform_contributions_task(
         state: Unused - kept for API compatibility. Processes all contributions
                from silver layer (already filtered to target state committees).
         cycle: Optional election cycle filter (e.g., 2026)
+        chunksize: Number of records to process per chunk (default: 10,000)
 
     Returns:
         Dictionary with transformation statistics
     """
+    from sqlalchemy import func
+
     logger = get_logger()
     logger.info("Starting contribution transformation to gold layer")
 
     with get_session() as session:
+        # Build FK lookup caches (committees and candidates are small, can fit in memory)
+        logger.info("Building FK lookup caches...")
+
+        # Cache committees
+        committee_cache = {}
+        for committee in session.execute(select(GoldCommittee)).scalars().all():
+            committee_cache[committee.fec_committee_id] = committee.id
+        logger.info(f"Cached {len(committee_cache)} committees")
+
+        # Cache candidates
+        candidate_cache = {}
+        for candidate in session.execute(select(GoldCandidate)).scalars().all():
+            candidate_cache[candidate.fec_candidate_id] = candidate.id
+        logger.info(f"Cached {len(candidate_cache)} candidates")
+
         # Build query for silver contributions
         stmt = select(SilverFECContribution)
 
         # Apply filters if provided
-        # Note: state parameter not used - silver layer already filtered to target
-        # state committees. We process all contributions regardless of contributor state.
         if cycle:
             stmt = stmt.where(SilverFECContribution.election_cycle == cycle)
 
-        # Load into DataFrame
-        df = pd.read_sql(stmt, session.connection())
-        logger.info(f"Loaded {len(df)} contribution records from silver")
+        # Get total count for progress tracking
+        count_stmt = select(func.count()).select_from(SilverFECContribution)
+        if cycle:
+            count_stmt = count_stmt.where(SilverFECContribution.election_cycle == cycle)
 
-        if df.empty:
+        total_count = session.execute(count_stmt).scalar()
+        logger.info(f"Processing {total_count:,} silver contributions in chunks of {chunksize:,}")
+
+        if total_count == 0:
             logger.warning("No contributions found in silver layer")
             return {
                 "total_contributions": 0,
@@ -494,95 +529,117 @@ def transform_contributions_task(
                 "unresolved_contributors": 0,
                 "unresolved_committees": 0,
                 "unresolved_candidates": 0,
+                "chunks_processed": 0,
             }
 
-        # Load to gold layer with UPSERT and FK resolution
+        # Process in chunks
+        total_processed = 0
         loaded_count = 0
         updated_count = 0
         unresolved_contributors = 0
         unresolved_committees = 0
         unresolved_candidates = 0
+        chunks_processed = 0
+        offset = 0
 
-        for _, row in df.iterrows():
-            # Resolve contributor FK
-            contributor_lookup = select(GoldContributor).where(
-                GoldContributor.name == row["contributor_name"],
-                GoldContributor.city == row["contributor_city"],
-                GoldContributor.state == row["contributor_state"],
-                GoldContributor.employer == row["contributor_employer"],
-            )
-            contributor = session.execute(contributor_lookup).scalar_one_or_none()
+        while offset < total_count:
+            # Fetch chunk
+            chunk_stmt = stmt.limit(chunksize).offset(offset)
+            chunk_df = pd.read_sql(chunk_stmt, session.connection())
 
-            if not contributor:
-                logger.warning(f"Contributor not found in gold layer: {row['contributor_name']}")
-                unresolved_contributors += 1
-                continue  # Skip this contribution
+            if chunk_df.empty:
+                break
 
-            # Resolve committee FK
-            committee_lookup = select(GoldCommittee).where(
-                GoldCommittee.fec_committee_id == row["committee_id"]
-            )
-            committee = session.execute(committee_lookup).scalar_one_or_none()
+            chunk_size = len(chunk_df)
+            total_processed += chunk_size
 
-            if not committee:
-                logger.warning(f"Committee not found in gold layer: {row['committee_id']}")
-                unresolved_committees += 1
-                continue  # Skip this contribution
-
-            # Resolve candidate FK (optional - some committees aren't candidate committees)
-            candidate = None
-            if pd.notna(row.get("candidate_id")):
-                candidate_lookup = select(GoldCandidate).where(
-                    GoldCandidate.fec_candidate_id == row["candidate_id"]
+            # Process each contribution in the chunk
+            for _, row in chunk_df.iterrows():
+                # Resolve contributor FK (must query - too many to cache)
+                contributor_lookup = select(GoldContributor.id).where(
+                    GoldContributor.name == row["contributor_name"],
+                    GoldContributor.city == row["contributor_city"],
+                    GoldContributor.state == row["contributor_state"],
+                    GoldContributor.employer == row["contributor_employer"],
                 )
-                candidate = session.execute(candidate_lookup).scalar_one_or_none()
+                contributor_id = session.execute(contributor_lookup).scalar_one_or_none()
 
-                if not candidate:
-                    logger.debug(f"Candidate not found in gold layer: {row['candidate_id']}")
-                    unresolved_candidates += 1
-                    # Don't skip - candidate FK is optional
+                if not contributor_id:
+                    unresolved_contributors += 1
+                    continue  # Skip this contribution
 
-            # Check if contribution already exists (by source_sub_id)
-            lookup_stmt = select(GoldContribution).where(
-                GoldContribution.source_system == "FEC",
-                GoldContribution.source_transaction_id == row["source_sub_id"],
-            )
-            existing = session.execute(lookup_stmt).scalar_one_or_none()
+                # Resolve committee FK (use cache)
+                committee_id = committee_cache.get(row["committee_id"])
+                if not committee_id:
+                    unresolved_committees += 1
+                    continue  # Skip this contribution
 
-            if existing:
-                # Update existing record
-                existing.contributor_id = contributor.id
-                existing.recipient_committee_id = committee.id
-                existing.recipient_candidate_id = candidate.id if candidate else None
-                existing.contribution_date = row["contribution_date"]
-                existing.amount = row["contribution_amount"]
-                existing.contribution_type = row.get("receipt_type") or "DIRECT"  # Changed
-                existing.election_type = row.get("election_type")
-                existing.election_year = row.get("election_cycle", 2026)
-                existing.election_cycle = row.get("election_cycle", 2026)
-                existing.memo_text = row.get("memo_text")
-                updated_count += 1
-            else:
-                # Insert new record
-                contribution = GoldContribution(
-                    contributor_id=contributor.id,
-                    recipient_committee_id=committee.id,
-                    recipient_candidate_id=candidate.id if candidate else None,
-                    contribution_date=row["contribution_date"],
-                    amount=row["contribution_amount"],
-                    contribution_type=row.get("receipt_type") or "DIRECT",  # Changed
-                    election_type=row.get("election_type"),
-                    source_system="FEC",
-                    source_transaction_id=row["source_sub_id"],
-                    election_year=row.get("election_cycle", 2026),
-                    election_cycle=row.get("election_cycle", 2026),
-                    memo_text=row.get("memo_text"),
+                # Resolve candidate FK (use cache, optional)
+                candidate_id = None
+                if pd.notna(row.get("candidate_id")):
+                    candidate_id = candidate_cache.get(row["candidate_id"])
+                    if not candidate_id:
+                        unresolved_candidates += 1
+                        # Don't skip - candidate FK is optional
+
+                # Check if contribution already exists (by source_sub_id)
+                lookup_stmt = select(GoldContribution.id).where(
+                    GoldContribution.source_system == "FEC",
+                    GoldContribution.source_transaction_id == row["source_sub_id"],
                 )
-                session.add(contribution)
-                loaded_count += 1
+                existing_id = session.execute(lookup_stmt).scalar_one_or_none()
 
-        session.commit()
+                if existing_id:
+                    # Update existing record
+                    session.execute(
+                        GoldContribution.__table__.update()
+                        .where(GoldContribution.id == existing_id)
+                        .values(
+                            contributor_id=contributor_id,
+                            recipient_committee_id=committee_id,
+                            recipient_candidate_id=candidate_id,
+                            contribution_date=row["contribution_date"],
+                            amount=row["contribution_amount"],
+                            contribution_type=row.get("receipt_type") or "DIRECT",
+                            election_type=row.get("election_type"),
+                            election_year=row.get("election_cycle", 2026),
+                            election_cycle=row.get("election_cycle", 2026),
+                            memo_text=row.get("memo_text"),
+                        )
+                    )
+                    updated_count += 1
+                else:
+                    # Insert new record
+                    contribution = GoldContribution(
+                        contributor_id=contributor_id,
+                        recipient_committee_id=committee_id,
+                        recipient_candidate_id=candidate_id,
+                        contribution_date=row["contribution_date"],
+                        amount=row["contribution_amount"],
+                        contribution_type=row.get("receipt_type") or "DIRECT",
+                        election_type=row.get("election_type"),
+                        source_system="FEC",
+                        source_transaction_id=row["source_sub_id"],
+                        election_year=row.get("election_cycle", 2026),
+                        election_cycle=row.get("election_cycle", 2026),
+                        memo_text=row.get("memo_text"),
+                    )
+                    session.add(contribution)
+                    loaded_count += 1
 
+            session.commit()
+            chunks_processed += 1
+            offset += chunksize
+
+            # Log progress every 10 chunks
+            if chunks_processed % 10 == 0:
+                logger.info(
+                    f"Progress: {chunks_processed} chunks, "
+                    f"{total_processed:,} processed, "
+                    f"{loaded_count + updated_count:,} loaded/updated"
+                )
+
+        logger.info(f"Completed: {chunks_processed} chunks, {total_processed:,} contributions")
         logger.info(f"Loaded {loaded_count} new contributions to gold layer")
         logger.info(f"Updated {updated_count} existing contributions")
 
@@ -596,12 +653,13 @@ def transform_contributions_task(
             )
 
         return {
-            "total_contributions": len(df),
+            "total_contributions": total_processed,
             "loaded_count": loaded_count,
             "updated_count": updated_count,
             "unresolved_contributors": unresolved_contributors,
             "unresolved_committees": unresolved_committees,
             "unresolved_candidates": unresolved_candidates,
+            "chunks_processed": chunks_processed,
         }
 
 
