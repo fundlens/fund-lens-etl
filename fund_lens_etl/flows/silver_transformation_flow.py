@@ -202,10 +202,16 @@ def transform_candidates_task(
             bronze_candidates = [
                 c
                 for c in bronze_candidates
-                if c.raw_json
-                and (
-                    cycle in c.raw_json.get("election_years", [])
-                    or any(abs(year - cycle) <= 2 for year in c.raw_json.get("election_years", []))
+                if c.cycles
+                and cycle in c.cycles
+                or (
+                    c.raw_json
+                    and (
+                        cycle in c.raw_json.get("election_years", [])
+                        or any(
+                            abs(year - cycle) <= 2 for year in c.raw_json.get("election_years", [])
+                        )
+                    )
                 )
             ]
 
