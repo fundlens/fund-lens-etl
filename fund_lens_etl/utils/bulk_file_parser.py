@@ -217,10 +217,16 @@ def clean_text_field(text: str | None) -> str | None:
         None
         >>> clean_text_field(None)
         None
+        >>> clean_text_field("NULL")
+        None
     """
     if not text or pd.isna(text):
         return None
 
     cleaned = str(text).strip()
+
+    # Convert the string "NULL" to actual None
+    if cleaned.upper() == "NULL":
+        return None
 
     return cleaned if cleaned else None
