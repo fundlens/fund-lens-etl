@@ -47,6 +47,7 @@ BULK_TIMEOUT = 3600  # 1 hour for bulk operations
 def extract_committees_from_bulk_task(
     data_file: Path,
     header_file: Path,
+    election_cycle: int,
 ) -> int:
     """
     Extract and load committees from bulk file.
@@ -54,6 +55,7 @@ def extract_committees_from_bulk_task(
     Args:
         data_file: Path to cm.txt
         header_file: Path to cm_header_file.csv
+        election_cycle: Election cycle year (e.g., 2026)
 
     Returns:
         Number of records loaded
@@ -70,6 +72,7 @@ def extract_committees_from_bulk_task(
     df = extractor.extract(
         file_path=data_file,
         header_file_path=header_file,
+        election_cycle=election_cycle,
     )
 
     # Load to Bronze
@@ -89,6 +92,7 @@ def extract_committees_from_bulk_task(
 def extract_candidates_from_bulk_task(
     data_file: Path,
     header_file: Path,
+    election_cycle: int,
 ) -> int:
     """
     Extract and load candidates from bulk file.
@@ -96,6 +100,7 @@ def extract_candidates_from_bulk_task(
     Args:
         data_file: Path to cn.txt
         header_file: Path to cn_header_file.csv
+        election_cycle: Election cycle year (e.g., 2026)
 
     Returns:
         Number of records loaded
@@ -112,6 +117,7 @@ def extract_candidates_from_bulk_task(
     df = extractor.extract(
         file_path=data_file,
         header_file_path=header_file,
+        election_cycle=election_cycle,
     )
 
     # Load to Bronze
@@ -317,6 +323,7 @@ def bulk_ingestion_flow(
             committees_loaded = extract_committees_from_bulk_task(
                 data_file=committee_file,
                 header_file=committee_header,
+                election_cycle=election_cycle,
             )
             results["committees_loaded"] = committees_loaded
             logger.info(f"✓ Loaded {committees_loaded:,} committees")
@@ -342,6 +349,7 @@ def bulk_ingestion_flow(
             candidates_loaded = extract_candidates_from_bulk_task(
                 data_file=candidate_file,
                 header_file=candidate_header,
+                election_cycle=election_cycle,
             )
             results["candidates_loaded"] = candidates_loaded
             logger.info(f"✓ Loaded {candidates_loaded:,} candidates")

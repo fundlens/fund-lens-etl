@@ -185,8 +185,13 @@ def transform_candidates_task(
         Dict with transformation stats
     """
     with get_session() as session:
-        # Fetch all Bronze candidates
-        stmt = select(BronzeFECCandidate)
+        # OPTIMIZATION: Use NOT EXISTS to only select Bronze candidates not yet in Silver
+        subquery = (
+            select(SilverFECCandidate.source_candidate_id)
+            .where(SilverFECCandidate.source_candidate_id == BronzeFECCandidate.candidate_id)
+            .exists()
+        )
+        stmt = select(BronzeFECCandidate).where(~subquery)
         bronze_candidates = session.execute(stmt).scalars().all()
 
         # Filter in Python

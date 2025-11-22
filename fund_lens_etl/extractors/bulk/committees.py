@@ -60,6 +60,7 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         Args:
             file_path: Path to cm.txt bulk file
             header_file_path: Path to cm_header_file.csv
+            election_cycle: Election cycle year (e.g., 2026)
             **kwargs: Additional arguments
 
         Returns:
@@ -67,9 +68,12 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         """
         file_path = kwargs.get("file_path")
         header_file_path = kwargs.get("header_file_path")
+        election_cycle = kwargs.get("election_cycle")
 
         if not file_path or not header_file_path:
             raise ValueError("file_path and header_file_path are required")
+        if not election_cycle:
+            raise ValueError("election_cycle is required")
 
         logger = get_logger()
         logger.info(f"Extracting committees from bulk file: {file_path}")
@@ -87,6 +91,9 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         # Clean and standardize data
         df = self._clean_data(df)
 
+        # Add election cycle (bulk files don't include this field)
+        df["cycles"] = [[election_cycle]] * len(df)  # JSON array with single cycle
+
         logger.info(f"Extracted {len(df):,} committees from bulk file")
 
         return df
@@ -95,6 +102,7 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         self,
         file_path: Path | str,
         header_file_path: Path | str,
+        election_cycle: int,
         chunksize: int = 10_000,
         **kwargs,
     ) -> Iterator[pd.DataFrame]:
@@ -104,6 +112,7 @@ class BulkFECCommitteeExtractor(BaseExtractor):
         Args:
             file_path: Path to cm.txt bulk file
             header_file_path: Path to cm_header_file.csv
+            election_cycle: Election cycle year (e.g., 2026)
             chunksize: Rows per chunk
             **kwargs: Additional arguments
 
@@ -123,6 +132,9 @@ class BulkFECCommitteeExtractor(BaseExtractor):
 
             # Clean and standardize data
             chunk = self._clean_data(chunk)
+
+            # Add election cycle (bulk files don't include this field)
+            chunk["cycles"] = [[election_cycle]] * len(chunk)  # JSON array with single cycle
 
             yield chunk
 
