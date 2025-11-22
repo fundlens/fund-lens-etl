@@ -73,6 +73,7 @@ class BulkFECContributionExtractor(BaseExtractor):
         self,
         file_path: Path | str,
         header_file_path: Path | str,
+        election_cycle: int,
         chunksize: int = 100_000,
         **kwargs,
     ) -> Iterator[pd.DataFrame]:
@@ -85,6 +86,7 @@ class BulkFECContributionExtractor(BaseExtractor):
         Args:
             file_path: Path to itcont.txt bulk file
             header_file_path: Path to indiv_header_file.csv
+            election_cycle: Election cycle year (e.g., 2026) to populate two_year_transaction_period
             chunksize: Rows per chunk (default 100K for memory efficiency)
             **kwargs: Additional arguments
 
@@ -93,7 +95,7 @@ class BulkFECContributionExtractor(BaseExtractor):
 
         Example:
             >>> extractor = BulkFECContributionExtractor()
-            >>> for chunk in extractor.extract_chunked("data/itcont.txt", "data/indiv_header.csv"):
+            >>> for chunk in extractor.extract_chunked("data/itcont.txt", "data/indiv_header.csv", 2026):
             ...     loader.load(session, chunk)
         """
         logger = get_logger()
@@ -111,6 +113,9 @@ class BulkFECContributionExtractor(BaseExtractor):
 
             # Clean and standardize data
             chunk = self._clean_data(chunk)
+
+            # Add election cycle (bulk files don't include this field)
+            chunk["two_year_transaction_period"] = election_cycle
 
             # Log progress every 10 chunks
             if chunk_num % 10 == 0:

@@ -131,6 +131,7 @@ def extract_candidates_from_bulk_task(
 def extract_contributions_from_bulk_task(
     data_file: Path,
     header_file: Path,
+    election_cycle: int,
     chunksize: int = 10_000,
 ) -> dict[str, int]:
     """
@@ -145,6 +146,7 @@ def extract_contributions_from_bulk_task(
     Args:
         data_file: Path to itcont.txt
         header_file: Path to indiv_header_file.csv
+        election_cycle: Election cycle year (e.g., 2026) to populate two_year_transaction_period
         chunksize: Records per chunk (default 10K, smaller = faster with existing data)
 
     Returns:
@@ -171,6 +173,7 @@ def extract_contributions_from_bulk_task(
         file_path=data_file,
         header_file_path=header_file,
         chunksize=chunksize,
+        election_cycle=election_cycle,
     ):
         chunks_processed += 1
         chunk_size = len(chunk_df)
@@ -370,6 +373,7 @@ def bulk_ingestion_flow(
             contribution_results = extract_contributions_from_bulk_task(
                 data_file=contribution_file,
                 header_file=contribution_header,
+                election_cycle=election_cycle,
                 chunksize=contribution_chunksize,
             )
             results["contributions_loaded"] = contribution_results["new_records"]
