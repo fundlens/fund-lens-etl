@@ -59,13 +59,13 @@ BULK_FILES = {
     },
     "pas2": {
         "description": "Committee-to-Candidate Contributions",
-        "zip_name": "pas2_{cycle}.zip",
+        "zip_name": "pas2{yy}.zip",
         "contains": ["itpas2.txt"],
         "header_url": "https://www.fec.gov/files/bulk-downloads/data_dictionaries/pas2_header_file.csv",
     },
     "oth": {
         "description": "Committee-to-Committee Transactions",
-        "zip_name": "oth_{cycle}.zip",
+        "zip_name": "oth{yy}.zip",
         "contains": ["itoth.txt"],
         "header_url": "https://www.fec.gov/files/bulk-downloads/data_dictionaries/oth_header_file.csv",
     },
