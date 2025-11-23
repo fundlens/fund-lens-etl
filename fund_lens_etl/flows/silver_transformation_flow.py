@@ -394,7 +394,7 @@ def transform_contributions_task(
     total_bronze = 0
     total_silver = 0
     chunks_processed = 0
-    last_id = None  # Cursor for pagination
+    last_sub_id = None  # Cursor for pagination
 
     while True:
         # OPTIMIZATION: Create new session for each chunk to prevent memory bloat
@@ -417,11 +417,12 @@ def transform_contributions_task(
 
             # OPTIMIZATION: Cursor-based pagination (keyset pagination)
             # This avoids the performance degradation of OFFSET
-            if last_id is not None:
-                stmt = stmt.where(BronzeFECScheduleA.id > last_id)
+            # Note: sub_id is the primary key, so we can use it for pagination
+            if last_sub_id is not None:
+                stmt = stmt.where(BronzeFECScheduleA.sub_id > last_sub_id)
 
-            # Order by id for consistent cursor pagination
-            stmt = stmt.order_by(BronzeFECScheduleA.id).limit(chunksize)
+            # Order by sub_id for consistent cursor pagination
+            stmt = stmt.order_by(BronzeFECScheduleA.sub_id).limit(chunksize)
 
             # Fetch chunk
             bronze_chunk = session.execute(stmt).scalars().all()
@@ -432,8 +433,8 @@ def transform_contributions_task(
             chunk_size = len(bronze_chunk)
             total_bronze += chunk_size
 
-            # Update cursor to last id in this chunk
-            last_id = bronze_chunk[-1].id
+            # Update cursor to last sub_id in this chunk
+            last_sub_id = bronze_chunk[-1].sub_id
 
             # Convert to DataFrame
             bronze_df = pd.DataFrame(
