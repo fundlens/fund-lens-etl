@@ -315,7 +315,10 @@ def transform_contributions_task(
     """
     Transform Bronze contributions to Silver with committee/candidate enrichment.
 
-    OPTIMIZED: Processes in chunks to avoid loading millions of records into memory.
+    OPTIMIZED:
+    - Uses cursor-based pagination instead of OFFSET to avoid performance degradation
+    - Creates new session per chunk to prevent memory bloat
+    - Processes in chunks to avoid loading millions of records into memory
 
     Args:
         state: Unused - kept for API compatibility. Bronze ingestion already filters
@@ -333,7 +336,8 @@ def transform_contributions_task(
 
     logger = get_run_logger()
 
-    with get_session() as session:
+    # Get count with a separate session
+    with get_session() as count_session:
         # Build base query with filters
         # OPTIMIZATION: Use NOT EXISTS to only select Bronze records not yet in Silver
         # This prevents re-transforming millions of already-processed records
@@ -342,16 +346,8 @@ def transform_contributions_task(
             .where(SilverFECContribution.source_sub_id == BronzeFECScheduleA.sub_id)
             .exists()
         )
-        stmt = select(BronzeFECScheduleA).where(~subquery)
 
-        if cycle:
-            stmt = stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
-        if start_date:
-            stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date >= start_date)
-        if end_date:
-            stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date <= end_date)
-
-        # Get total count for progress tracking (only count records not yet in Silver)
+        # Build count query
         count_stmt = select(func.count()).select_from(BronzeFECScheduleA).where(~subquery)
         if cycle:
             count_stmt = count_stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
@@ -362,7 +358,7 @@ def transform_contributions_task(
         if end_date:
             count_stmt = count_stmt.where(BronzeFECScheduleA.contribution_receipt_date <= end_date)
 
-        total_count = session.execute(count_stmt).scalar()
+        total_count = count_session.execute(count_stmt).scalar()
         logger.info(f"Processing {total_count:,} bronze contributions in chunks of {chunksize:,}")
 
         if total_count == 0:
@@ -373,43 +369,71 @@ def transform_contributions_task(
                 "chunks_processed": 0,
             }
 
-        # Get all column names from Bronze model (excluding metadata)
-        exclude_cols = {
-            "created_at",
-            "updated_at",
-            "ingestion_timestamp",
-            "source_system",
-            "metadata",
-            "registry",
-        }
-        bronze_cols = [
-            col.name
-            for col in BronzeFECScheduleA.__table__.columns.values()
-            if col.name not in exclude_cols
-        ]
+    # Get all column names from Bronze model (excluding metadata)
+    exclude_cols = {
+        "created_at",
+        "updated_at",
+        "ingestion_timestamp",
+        "source_system",
+        "metadata",
+        "registry",
+    }
+    bronze_cols = [
+        col.name
+        for col in BronzeFECScheduleA.__table__.columns.values()
+        if col.name not in exclude_cols
+    ]
 
-        # Get valid Silver model columns
-        valid_columns = {col.name for col in SilverFECContribution.__table__.columns.values()}
-        valid_columns.discard("id")
-        valid_columns.discard("created_at")
-        valid_columns.discard("updated_at")
+    # Get valid Silver model columns
+    valid_columns = {col.name for col in SilverFECContribution.__table__.columns.values()}
+    valid_columns.discard("id")
+    valid_columns.discard("created_at")
+    valid_columns.discard("updated_at")
 
-        # Process in chunks
-        total_bronze = 0
-        total_silver = 0
-        chunks_processed = 0
-        offset = 0
+    # Process in chunks using cursor-based pagination
+    total_bronze = 0
+    total_silver = 0
+    chunks_processed = 0
+    last_id = None  # Cursor for pagination
 
-        while offset < total_count:
+    while True:
+        # OPTIMIZATION: Create new session for each chunk to prevent memory bloat
+        with get_session() as session:
+            # Build query with NOT EXISTS filter
+            subquery = (
+                select(SilverFECContribution.source_sub_id)
+                .where(SilverFECContribution.source_sub_id == BronzeFECScheduleA.sub_id)
+                .exists()
+            )
+            stmt = select(BronzeFECScheduleA).where(~subquery)
+
+            # Apply filters
+            if cycle:
+                stmt = stmt.where(BronzeFECScheduleA.two_year_transaction_period == cycle)
+            if start_date:
+                stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date >= start_date)
+            if end_date:
+                stmt = stmt.where(BronzeFECScheduleA.contribution_receipt_date <= end_date)
+
+            # OPTIMIZATION: Cursor-based pagination (keyset pagination)
+            # This avoids the performance degradation of OFFSET
+            if last_id is not None:
+                stmt = stmt.where(BronzeFECScheduleA.id > last_id)
+
+            # Order by id for consistent cursor pagination
+            stmt = stmt.order_by(BronzeFECScheduleA.id).limit(chunksize)
+
             # Fetch chunk
-            chunk_stmt = stmt.limit(chunksize).offset(offset)
-            bronze_chunk = session.execute(chunk_stmt).scalars().all()
+            bronze_chunk = session.execute(stmt).scalars().all()
 
             if not bronze_chunk:
                 break
 
             chunk_size = len(bronze_chunk)
             total_bronze += chunk_size
+
+            # Update cursor to last id in this chunk
+            last_id = bronze_chunk[-1].id
 
             # Convert to DataFrame
             bronze_df = pd.DataFrame(
@@ -466,7 +490,6 @@ def transform_contributions_task(
 
             session.commit()
             chunks_processed += 1
-            offset += chunksize
 
             # Log progress every 10 chunks
             if chunks_processed % 10 == 0:
@@ -476,18 +499,20 @@ def transform_contributions_task(
                     f"{total_silver:,} loaded/updated"
                 )
 
-        logger.info(
-            f"Completed: {chunks_processed} chunks, "
-            f"{total_bronze:,} bronze records, "
-            f"{total_silver:,} silver records"
-        )
+        # Session is automatically closed at end of 'with' block, preventing memory bloat
 
-        return {
-            "bronze_records": total_bronze,
-            "silver_records": total_silver,
-            "skipped": total_bronze - total_silver,
-            "chunks_processed": chunks_processed,
-        }
+    logger.info(
+        f"Completed: {chunks_processed} chunks, "
+        f"{total_bronze:,} bronze records, "
+        f"{total_silver:,} silver records"
+    )
+
+    return {
+        "bronze_records": total_bronze,
+        "silver_records": total_silver,
+        "skipped": total_bronze - total_silver,
+        "chunks_processed": chunks_processed,
+    }
 
 
 @task(name="validate_transformation")

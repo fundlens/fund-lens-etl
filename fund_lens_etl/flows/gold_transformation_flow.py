@@ -478,7 +478,10 @@ def transform_contributions_task(
     """
     Transform silver contributions to gold fact table.
 
-    OPTIMIZED: Processes in chunks to avoid loading millions of records into memory.
+    OPTIMIZED:
+    - Uses cursor-based pagination instead of OFFSET to avoid performance degradation
+    - Creates new session per chunk to prevent memory bloat
+    - Processes in chunks to avoid loading millions of records into memory
 
     This creates the central fact table with foreign keys to:
     - GoldContributor (resolved by name/city/state/employer)
@@ -499,22 +502,24 @@ def transform_contributions_task(
     logger = get_logger()
     logger.info("Starting contribution transformation to gold layer")
 
-    with get_session() as session:
-        # Build FK lookup caches (committees and candidates are small, can fit in memory)
+    # Build FK lookup caches with a separate session
+    with get_session() as cache_session:
         logger.info("Building FK lookup caches...")
 
         # Cache committees
         committee_cache = {}
-        for committee in session.execute(select(GoldCommittee)).scalars().all():
+        for committee in cache_session.execute(select(GoldCommittee)).scalars().all():
             committee_cache[committee.fec_committee_id] = committee.id
         logger.info(f"Cached {len(committee_cache)} committees")
 
         # Cache candidates
         candidate_cache = {}
-        for candidate in session.execute(select(GoldCandidate)).scalars().all():
+        for candidate in cache_session.execute(select(GoldCandidate)).scalars().all():
             candidate_cache[candidate.fec_candidate_id] = candidate.id
         logger.info(f"Cached {len(candidate_cache)} candidates")
 
+    # Get count with a separate session
+    with get_session() as count_session:
         # Build query for silver contributions
         # OPTIMIZATION: Use NOT EXISTS to only select Silver records not yet in Gold
         # This prevents re-transforming millions of already-processed records
@@ -526,18 +531,13 @@ def transform_contributions_task(
             )
             .exists()
         )
-        stmt = select(SilverFECContribution).where(~subquery)
-
-        # Apply filters if provided
-        if cycle:
-            stmt = stmt.where(SilverFECContribution.election_cycle == cycle)
 
         # Get total count for progress tracking (only count records not yet in Gold)
         count_stmt = select(func.count()).select_from(SilverFECContribution).where(~subquery)
         if cycle:
             count_stmt = count_stmt.where(SilverFECContribution.election_cycle == cycle)
 
-        total_count = session.execute(count_stmt).scalar()
+        total_count = count_session.execute(count_stmt).scalar()
         logger.info(f"Processing {total_count:,} silver contributions in chunks of {chunksize:,}")
 
         if total_count == 0:
@@ -552,26 +552,53 @@ def transform_contributions_task(
                 "chunks_processed": 0,
             }
 
-        # Process in chunks
-        total_processed = 0
-        loaded_count = 0
-        updated_count = 0
-        unresolved_contributors = 0
-        unresolved_committees = 0
-        unresolved_candidates = 0
-        chunks_processed = 0
-        offset = 0
+    # Process in chunks using cursor-based pagination
+    total_processed = 0
+    loaded_count = 0
+    updated_count = 0
+    unresolved_contributors = 0
+    unresolved_committees = 0
+    unresolved_candidates = 0
+    chunks_processed = 0
+    last_id = None  # Cursor for pagination
 
-        while offset < total_count:
+    while True:
+        # OPTIMIZATION: Create new session for each chunk to prevent memory bloat
+        with get_session() as session:
+            # Build query with NOT EXISTS filter
+            subquery = (
+                select(GoldContribution.source_sub_id)
+                .where(
+                    GoldContribution.source_system == "FEC",
+                    GoldContribution.source_sub_id == SilverFECContribution.source_sub_id,
+                )
+                .exists()
+            )
+            stmt = select(SilverFECContribution).where(~subquery)
+
+            # Apply filters
+            if cycle:
+                stmt = stmt.where(SilverFECContribution.election_cycle == cycle)
+
+            # OPTIMIZATION: Cursor-based pagination (keyset pagination)
+            # This avoids the performance degradation of OFFSET
+            if last_id is not None:
+                stmt = stmt.where(SilverFECContribution.id > last_id)
+
+            # Order by id for consistent cursor pagination
+            stmt = stmt.order_by(SilverFECContribution.id).limit(chunksize)
+
             # Fetch chunk
-            chunk_stmt = stmt.limit(chunksize).offset(offset)
-            chunk_df = pd.read_sql(chunk_stmt, session.connection())
+            chunk_df = pd.read_sql(stmt, session.connection())
 
             if chunk_df.empty:
                 break
 
             chunk_size = len(chunk_df)
             total_processed += chunk_size
+
+            # Update cursor to last id in this chunk
+            last_id = chunk_df["id"].iloc[-1]
 
             # Process each contribution in the chunk
             for _, row in chunk_df.iterrows():
@@ -640,6 +667,7 @@ def transform_contributions_task(
                         election_type=row.get("election_type"),
                         source_system="FEC",
                         source_transaction_id=row["transaction_id"],
+                        source_sub_id=row["source_sub_id"],
                         election_year=row.get("election_cycle", 2026),
                         election_cycle=row.get("election_cycle", 2026),
                         memo_text=row.get("memo_text"),
@@ -649,7 +677,6 @@ def transform_contributions_task(
 
             session.commit()
             chunks_processed += 1
-            offset += chunksize
 
             # Log progress every 10 chunks
             if chunks_processed % 10 == 0:
@@ -659,28 +686,30 @@ def transform_contributions_task(
                     f"{loaded_count + updated_count:,} loaded/updated"
                 )
 
-        logger.info(f"Completed: {chunks_processed} chunks, {total_processed:,} contributions")
-        logger.info(f"Loaded {loaded_count} new contributions to gold layer")
-        logger.info(f"Updated {updated_count} existing contributions")
+        # Session is automatically closed at end of 'with' block, preventing memory bloat
 
-        if unresolved_contributors > 0:
-            logger.warning(f"Unresolved contributors: {unresolved_contributors}")
-        if unresolved_committees > 0:
-            logger.warning(f"Unresolved committees: {unresolved_committees}")
-        if unresolved_candidates > 0:
-            logger.info(
-                f"Unresolved candidates: {unresolved_candidates} (expected for non-candidate committees)"
-            )
+    logger.info(f"Completed: {chunks_processed} chunks, {total_processed:,} contributions")
+    logger.info(f"Loaded {loaded_count} new contributions to gold layer")
+    logger.info(f"Updated {updated_count} existing contributions")
 
-        return {
-            "total_contributions": total_processed,
-            "loaded_count": loaded_count,
-            "updated_count": updated_count,
-            "unresolved_contributors": unresolved_contributors,
-            "unresolved_committees": unresolved_committees,
-            "unresolved_candidates": unresolved_candidates,
-            "chunks_processed": chunks_processed,
-        }
+    if unresolved_contributors > 0:
+        logger.warning(f"Unresolved contributors: {unresolved_contributors}")
+    if unresolved_committees > 0:
+        logger.warning(f"Unresolved committees: {unresolved_committees}")
+    if unresolved_candidates > 0:
+        logger.info(
+            f"Unresolved candidates: {unresolved_candidates} (expected for non-candidate committees)"
+        )
+
+    return {
+        "total_contributions": total_processed,
+        "loaded_count": loaded_count,
+        "updated_count": updated_count,
+        "unresolved_contributors": unresolved_contributors,
+        "unresolved_committees": unresolved_committees,
+        "unresolved_candidates": unresolved_candidates,
+        "chunks_processed": chunks_processed,
+    }
 
 
 @task(
