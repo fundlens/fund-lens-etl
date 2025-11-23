@@ -76,8 +76,13 @@ def transform_committees_task(
         Dict with transformation stats
     """
     with get_session() as session:
-        # Fetch all Bronze committees
-        stmt = select(BronzeFECCommittee)
+        # OPTIMIZATION: Use NOT EXISTS to only select Bronze committees not yet in Silver
+        subquery = (
+            select(SilverFECCommittee.source_committee_id)
+            .where(SilverFECCommittee.source_committee_id == BronzeFECCommittee.committee_id)
+            .exists()
+        )
+        stmt = select(BronzeFECCommittee).where(~subquery)
         bronze_committees = session.execute(stmt).scalars().all()
 
         # Filter in Python

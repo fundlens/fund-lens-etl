@@ -293,8 +293,13 @@ def transform_committees_task(
     logger.info("Starting committee transformation to gold layer")
 
     with get_session() as session:
-        # Build query for silver committees
-        stmt = select(SilverFECCommittee)
+        # OPTIMIZATION: Use NOT EXISTS to only select Silver committees not yet in Gold
+        subquery = (
+            select(GoldCommittee.fec_committee_id)
+            .where(GoldCommittee.fec_committee_id == SilverFECCommittee.source_committee_id)
+            .exists()
+        )
+        stmt = select(SilverFECCommittee).where(~subquery)
 
         # Apply filters if provided
         if state:
@@ -386,8 +391,13 @@ def transform_candidates_task(
     logger.info("Starting candidate transformation to gold layer")
 
     with get_session() as session:
-        # Build query for silver candidates
-        stmt = select(SilverFECCandidate)
+        # OPTIMIZATION: Use NOT EXISTS to only select Silver candidates not yet in Gold
+        subquery = (
+            select(GoldCandidate.fec_candidate_id)
+            .where(GoldCandidate.fec_candidate_id == SilverFECCandidate.source_candidate_id)
+            .exists()
+        )
+        stmt = select(SilverFECCandidate).where(~subquery)
 
         # Apply filters if provided
         if state:
