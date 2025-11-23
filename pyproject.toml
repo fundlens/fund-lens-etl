@@ -17,7 +17,7 @@ dependencies = [
     "pydantic-settings (>=2.11.0,<3.0.0)",
     "requests (>=2.32.5,<3.0.0)",
     "pandas (>=2.3.3,<3.0.0)",
-    "fund-lens-models @ git+https://github.com/fundlens/fund-lens-models.git@v0.2.3",
+    "fund-lens-models @ git+https://github.com/fundlens/fund-lens-models.git@v0.2.4",
     "asyncpg (>=0.30.0,<0.31.0)",
 ]
 

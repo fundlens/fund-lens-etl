@@ -93,6 +93,7 @@ class BronzeToSilverFECTransformer(BaseTransformer):
             "contributor_occupation": "contributor_occupation",
             "entity_type": "entity_type",
             "committee_id": "committee_id",
+            "candidate_id": "bronze_candidate_id",  # Preserve from Bronze (pas2/API data)
             "recipient_committee_designation": "committee_designation",
             "receipt_type": "receipt_type",
             "election_type": "election_type",
@@ -284,10 +285,13 @@ class BronzeToSilverFECTransformer(BaseTransformer):
 
     def _enrich_with_candidate_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Enrich DataFrame with candidate data via JOIN through committee.
+        Enrich DataFrame with candidate data.
+
+        First uses candidate_id from Bronze (for pas2/API data with direct candidate links).
+        Falls back to deriving candidate_id from committee for other contribution types.
 
         Args:
-            df: DataFrame with committee_id column
+            df: DataFrame with committee_id and optionally bronze_candidate_id columns
 
         Returns:
             DataFrame with candidate_id, candidate_name, candidate_office, candidate_party added
@@ -299,35 +303,45 @@ class BronzeToSilverFECTransformer(BaseTransformer):
 
         logger.info("Enriching with candidate data from bronze_fec_candidate")
 
-        # Get unique committee IDs
-        unique_committee_ids = df["committee_id"].dropna().unique().tolist()
-
-        if not unique_committee_ids:
-            logger.warning("No committee IDs found in DataFrame")
+        # Initialize candidate_id column
+        # Priority: Use bronze_candidate_id if available (pas2/API data)
+        if "bronze_candidate_id" in df.columns:
+            df["candidate_id"] = df["bronze_candidate_id"]
+            logger.info(
+                f"Using candidate_id from Bronze for {df['candidate_id'].notna().sum()} records"
+            )
+        else:
             df["candidate_id"] = None
-            df["candidate_name"] = None
-            df["candidate_office"] = None
-            df["candidate_party"] = None
-            return df
 
-        # First get committee → candidate mapping
-        stmt = select(
-            BronzeFECCommittee.committee_id,
-            BronzeFECCommittee.candidate_ids,
-        ).where(BronzeFECCommittee.committee_id.in_(unique_committee_ids))
+        # For records without candidate_id, derive from committee
+        needs_lookup = df["candidate_id"].isna()
+        if needs_lookup.sum() > 0:
+            logger.info(f"Deriving candidate_id from committee for {needs_lookup.sum()} records")
 
-        result = self.session.execute(stmt)
-        committee_candidate_map = {}
+            # Get unique committee IDs that need lookup
+            unique_committee_ids = df.loc[needs_lookup, "committee_id"].dropna().unique().tolist()
 
-        for row in result:
-            committee_id = row[0]
-            candidate_ids = row[1]  # This is a JSON array
-            # Take the first candidate_id if multiple exist
-            if candidate_ids and len(candidate_ids) > 0:
-                committee_candidate_map[committee_id] = candidate_ids[0]
+            if unique_committee_ids:
+                # Get committee → candidate mapping
+                stmt = select(
+                    BronzeFECCommittee.committee_id,
+                    BronzeFECCommittee.candidate_ids,
+                ).where(BronzeFECCommittee.committee_id.in_(unique_committee_ids))
 
-        # Map committee_id → candidate_id
-        df["candidate_id"] = df["committee_id"].map(committee_candidate_map)
+                result = self.session.execute(stmt)
+                committee_candidate_map = {}
+
+                for row in result:
+                    committee_id = row[0]
+                    candidate_ids = row[1]  # This is a JSON array
+                    # Take the first candidate_id if multiple exist
+                    if candidate_ids and len(candidate_ids) > 0:
+                        committee_candidate_map[committee_id] = candidate_ids[0]
+
+                # Map committee_id → candidate_id for records that need it
+                df.loc[needs_lookup, "candidate_id"] = df.loc[needs_lookup, "committee_id"].map(
+                    committee_candidate_map
+                )
 
         # Now get candidate details
         unique_candidate_ids = df["candidate_id"].dropna().unique().tolist()

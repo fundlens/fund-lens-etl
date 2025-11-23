@@ -1,4 +1,10 @@
-"""Bulk file extractor for FEC individual contributions (Schedule A)."""
+"""Bulk file extractor for FEC contributions (Schedule A).
+
+Supports all FEC bulk contribution file types:
+- indiv (itcont.txt): Individual → Committee contributions
+- pas2 (itpas2.txt): Committee → Candidate contributions
+- oth (itoth.txt): Committee → Committee contributions
+"""
 
 import logging
 from collections.abc import Iterator
@@ -26,16 +32,23 @@ def get_logger():
 
 
 class BulkFECContributionExtractor(BaseExtractor):
-    """Extract individual contribution data (Schedule A) from FEC bulk files."""
+    """Extract contribution data (Schedule A) from FEC bulk files.
+
+    Supports all contribution types:
+    - indiv (itcont.txt): Individual → Committee (~9M records)
+    - pas2 (itpas2.txt): Committee → Candidate (~100K records)
+    - oth (itoth.txt): Committee → Committee (~millions of records)
+    """
 
     # Mapping from bulk file columns to API/Bronze table columns
+    # Note: CAND_ID only appears in pas2 files (committee-to-candidate)
     COLUMN_MAPPING = {
         "CMTE_ID": "committee_id",
         "AMNDT_IND": "amendment_indicator",
         "RPT_TP": "report_type",
         "TRANSACTION_PGI": "election_type",
         "IMAGE_NUM": "image_number",
-        "TRANSACTION_TP": "transaction_type",
+        "TRANSACTION_TP": "receipt_type",  # Maps to receipt_type (same as API field)
         "ENTITY_TP": "entity_type",
         "NAME": "contributor_name",
         "CITY": "contributor_city",
@@ -46,6 +59,7 @@ class BulkFECContributionExtractor(BaseExtractor):
         "TRANSACTION_DT": "contribution_receipt_date",
         "TRANSACTION_AMT": "contribution_receipt_amount",
         "OTHER_ID": "other_id",
+        "CAND_ID": "candidate_id",  # Only in pas2 files
         "TRAN_ID": "transaction_id",
         "FILE_NUM": "file_number",
         "MEMO_CD": "memo_code",
@@ -80,12 +94,14 @@ class BulkFECContributionExtractor(BaseExtractor):
         """
         Extract contribution data in chunks.
 
-        The contribution file is very large (~9.2M records, 1.6GB).
-        This method processes it in manageable chunks.
+        Supports all FEC contribution file types (indiv, pas2, oth).
+        Contribution files can be very large (up to 1.6GB).
+        This method processes them in manageable chunks.
 
         Args:
-            file_path: Path to itcont.txt bulk file
-            header_file_path: Path to indiv_header_file.csv
+            file_path: Path to contribution bulk file (itcont.txt, itpas2.txt, or itoth.txt)
+            header_file_path: Path to corresponding header file
+                             (indiv_header_file.csv, pas2_header_file.csv, or oth_header_file.csv)
             election_cycle: Election cycle year (e.g., 2026) to populate two_year_transaction_period
             chunksize: Rows per chunk (default 100K for memory efficiency)
             **kwargs: Additional arguments
@@ -95,11 +111,15 @@ class BulkFECContributionExtractor(BaseExtractor):
 
         Example:
             >>> extractor = BulkFECContributionExtractor()
+            >>> # Individual contributions
             >>> for chunk in extractor.extract_chunked("data/itcont.txt", "data/indiv_header.csv", 2026):
+            ...     loader.load(session, chunk)
+            >>> # Committee-to-candidate
+            >>> for chunk in extractor.extract_chunked("data/itpas2.txt", "data/pas2_header.csv", 2026):
             ...     loader.load(session, chunk)
         """
         logger = get_logger()
-        logger.info(f"Extracting individual contributions from bulk file in chunks: {file_path}")
+        logger.info(f"Extracting contributions from bulk file in chunks: {file_path}")
 
         chunk_num = 0
         total_rows = 0
@@ -173,7 +193,7 @@ class BulkFECContributionExtractor(BaseExtractor):
             "amendment_indicator",
             "report_type",
             "election_type",
-            "transaction_type",
+            "receipt_type",  # Updated from transaction_type
             "entity_type",
             "memo_code",
             "memo_text",
@@ -186,6 +206,10 @@ class BulkFECContributionExtractor(BaseExtractor):
         # Uppercase state codes
         if "contributor_state" in df.columns:
             df["contributor_state"] = df["contributor_state"].str.upper()
+
+        # Derive is_individual from entity_type (matches API behavior)
+        if "entity_type" in df.columns:
+            df["is_individual"] = df["entity_type"] == "IND"
 
         # Ensure sub_id is a string (it's the primary key)
         if "sub_id" in df.columns:

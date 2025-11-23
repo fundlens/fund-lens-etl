@@ -8,7 +8,7 @@ Bulk files are downloaded from: https://www.fec.gov/data/browse-data/?tab=bulk-d
 """
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from prefect import flow, task
 
@@ -23,6 +23,17 @@ from fund_lens_etl.loaders.bronze.fec import (
     BronzeFECCommitteeLoader,
     BronzeFECScheduleALoader,
 )
+
+
+# Type definitions
+class ContributionFileInfo(TypedDict):
+    """Type definition for contribution file mapping."""
+
+    file: Path
+    header: Path
+    description: str
+    estimated_records: str
+
 
 # Configuration
 BULK_RETRY_CONFIG = {
@@ -138,21 +149,27 @@ def extract_contributions_from_bulk_task(
     data_file: Path,
     header_file: Path,
     election_cycle: int,
+    file_type: str = "indiv",
     chunksize: int = 10_000,
 ) -> dict[str, int]:
     """
-    Extract and load individual contributions from bulk file in chunks.
+    Extract and load contributions from bulk file in chunks.
 
-    The contribution file is very large (~9.2M records, 1.6GB).
-    Processes in chunks to avoid memory issues.
+    Supports all FEC contribution file types:
+    - indiv (itcont.txt): Individual → Committee (~9M records, 1.6GB)
+    - pas2 (itpas2.txt): Committee → Candidate (~100K records, 12MB)
+    - oth (itoth.txt): Committee → Committee (~millions of records, 733MB)
+
+    Contribution files can be very large. Processes in chunks to avoid memory issues.
 
     OPTIMIZED: Checks which sub_id values already exist and only inserts new records.
     This avoids slow UPSERT conflicts on millions of existing records.
 
     Args:
-        data_file: Path to itcont.txt
-        header_file: Path to indiv_header_file.csv
+        data_file: Path to contribution file (itcont.txt, itpas2.txt, or itoth.txt)
+        header_file: Path to corresponding header file
         election_cycle: Election cycle year (e.g., 2026) to populate two_year_transaction_period
+        file_type: Type of contribution file (indiv, pas2, or oth)
         chunksize: Records per chunk (default 10K, smaller = faster with existing data)
 
     Returns:
@@ -163,7 +180,7 @@ def extract_contributions_from_bulk_task(
     from sqlalchemy import select
 
     logger = get_run_logger()
-    logger.info(f"Extracting individual contributions from {data_file} in chunks of {chunksize:,}")
+    logger.info(f"Extracting {file_type} contributions from {data_file} in chunks of {chunksize:,}")
     logger.info("OPTIMIZED MODE: Will skip records that already exist (checking sub_id)")
 
     extractor = BulkFECContributionExtractor()
@@ -250,6 +267,7 @@ def bulk_ingestion_flow(
     load_committees: bool = True,
     load_candidates: bool = True,
     load_contributions: bool = True,
+    contribution_types: list[str] | None = None,
     contribution_chunksize: int = 10_000,
 ) -> dict[str, Any]:
     """
@@ -264,9 +282,13 @@ def bulk_ingestion_flow(
         ├── cm_header_file.csv
         ├── cn.txt (candidates)
         ├── cn_header_file.csv
-        └── indiv26/
-            ├── itcont.txt (individual contributions)
-            └── (indiv_header_file.csv should be in parent dir)
+        ├── indiv26/
+        │   └── itcont.txt (individual contributions)
+        ├── indiv_header_file.csv
+        ├── itpas2.txt (committee→candidate contributions)
+        ├── pas2_header_file.csv
+        ├── itoth.txt (committee→committee contributions)
+        └── oth_header_file.csv
 
     Args:
         data_dir: Path to directory containing bulk files
@@ -274,21 +296,34 @@ def bulk_ingestion_flow(
         load_committees: Whether to load committees (default: True)
         load_candidates: Whether to load candidates (default: True)
         load_contributions: Whether to load contributions (default: True)
+        contribution_types: List of contribution types to load (default: ["indiv", "pas2", "oth"])
+                           Options: "indiv" (individual), "pas2" (committee→candidate), "oth" (committee→committee)
         contribution_chunksize: Records per chunk for contributions (default: 10K, optimized for skipping existing records)
 
     Returns:
         Summary statistics for the ingestion
 
     Example:
+        >>> # Load all contribution types
         >>> bulk_ingestion_flow(
         ...     data_dir="/Users/trb74/projects/fundlens/fund-lens-etl/data/2025-2026",
         ...     election_cycle=2026,
+        ... )
+        >>> # Load only individual contributions
+        >>> bulk_ingestion_flow(
+        ...     data_dir="/Users/trb74/projects/fundlens/fund-lens-etl/data/2025-2026",
+        ...     election_cycle=2026,
+        ...     contribution_types=["indiv"],
         ... )
     """
     from prefect import get_run_logger
 
     logger = get_run_logger()
     data_path = Path(data_dir)
+
+    # Default to loading all contribution types
+    if contribution_types is None:
+        contribution_types = ["indiv", "pas2", "oth"]
 
     logger.info("=" * 80)
     logger.info("BULK FILE INGESTION - BRONZE LAYER")
@@ -298,11 +333,14 @@ def bulk_ingestion_flow(
     logger.info(f"Load committees: {load_committees}")
     logger.info(f"Load candidates: {load_candidates}")
     logger.info(f"Load contributions: {load_contributions}")
+    if load_contributions:
+        logger.info(f"Contribution types: {', '.join(contribution_types)}")
     logger.info("=" * 80)
 
-    results = {
+    results: dict[str, Any] = {
         "election_cycle": election_cycle,
         "data_directory": str(data_path),
+        "contribution_types_processed": [],
     }
 
     # ========================================================================
@@ -358,41 +396,89 @@ def bulk_ingestion_flow(
         results["candidates_loaded"] = 0
 
     # ========================================================================
-    # STEP 3: Load Individual Contributions
+    # STEP 3: Load Contributions (All Types)
     # ========================================================================
     if load_contributions:
-        logger.info("\nStep 3: Loading individual contributions from bulk file...")
-        logger.info("This may take 1-2 hours for ~9.2M records...")
+        logger.info("\nStep 3: Loading contributions from bulk files...")
 
-        # Contributions are in indiv26 subdirectory
-        contribution_file = data_path / f"indiv{election_cycle % 100}" / "itcont.txt"
-        # Header is in parent directory
-        contribution_header = data_path / "indiv_header_file.csv"
+        # Define contribution file mappings
+        contribution_file_mapping: dict[str, ContributionFileInfo] = {
+            "indiv": {
+                "file": data_path / f"indiv{election_cycle % 100}" / "itcont.txt",
+                "header": data_path / "indiv_header_file.csv",
+                "description": "Individual → Committee",
+                "estimated_records": "~9M",
+            },
+            "pas2": {
+                "file": data_path / "itpas2.txt",
+                "header": data_path / "pas2_header_file.csv",
+                "description": "Committee → Candidate",
+                "estimated_records": "~100K",
+            },
+            "oth": {
+                "file": data_path / "itoth.txt",
+                "header": data_path / "oth_header_file.csv",
+                "description": "Committee → Committee",
+                "estimated_records": "~millions",
+            },
+        }
 
-        if not contribution_file.exists():
-            logger.error(f"Contribution file not found: {contribution_file}")
-            results["contributions_loaded"] = 0
-            results["contribution_chunks"] = 0
-        elif not contribution_header.exists():
-            logger.error(f"Contribution header file not found: {contribution_header}")
-            results["contributions_loaded"] = 0
-            results["contribution_chunks"] = 0
-        else:
+        total_contributions_loaded = 0
+        total_contributions_skipped = 0
+        total_chunks = 0
+
+        for contrib_type in contribution_types:
+            if contrib_type not in contribution_file_mapping:
+                logger.warning(f"Unknown contribution type: {contrib_type}. Skipping.")
+                continue
+
+            file_info = contribution_file_mapping[contrib_type]
+            logger.info(
+                f"\n  Processing {contrib_type} contributions "
+                f"({file_info['description']}, {file_info['estimated_records']} records)..."
+            )
+
+            contribution_file = file_info["file"]
+            contribution_header = file_info["header"]
+
+            if not contribution_file.exists():
+                logger.warning(f"  File not found: {contribution_file}. Skipping {contrib_type}.")
+                continue
+            elif not contribution_header.exists():
+                logger.warning(
+                    f"  Header not found: {contribution_header}. Skipping {contrib_type}."
+                )
+                continue
+
             contribution_results = extract_contributions_from_bulk_task(
                 data_file=contribution_file,
                 header_file=contribution_header,
                 election_cycle=election_cycle,
+                file_type=contrib_type,
                 chunksize=contribution_chunksize,
             )
-            results["contributions_loaded"] = contribution_results["new_records"]
-            results["contributions_skipped"] = contribution_results["skipped_existing"]
-            results["contribution_chunks"] = contribution_results["chunks_processed"]
+
+            total_contributions_loaded += contribution_results["new_records"]
+            total_contributions_skipped += contribution_results["skipped_existing"]
+            total_chunks += contribution_results["chunks_processed"]
+            results["contribution_types_processed"].append(contrib_type)
+
             logger.info(
-                f"✓ Processed {contribution_results['total_records']:,} contributions: "
+                f"  ✓ {contrib_type}: {contribution_results['total_records']:,} processed, "
                 f"{contribution_results['new_records']:,} new, "
-                f"{contribution_results['skipped_existing']:,} skipped (already exist) "
-                f"in {contribution_results['chunks_processed']} chunks"
+                f"{contribution_results['skipped_existing']:,} skipped, "
+                f"{contribution_results['chunks_processed']} chunks"
             )
+
+        results["contributions_loaded"] = total_contributions_loaded
+        results["contributions_skipped"] = total_contributions_skipped
+        results["contribution_chunks"] = total_chunks
+
+        logger.info(
+            f"\n✓ Total contributions: {total_contributions_loaded:,} loaded, "
+            f"{total_contributions_skipped:,} skipped, "
+            f"{total_chunks} chunks"
+        )
     else:
         logger.info("Skipping contributions (load_contributions=False)")
         results["contributions_loaded"] = 0
