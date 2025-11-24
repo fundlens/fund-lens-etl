@@ -518,7 +518,6 @@ def transform_contributions_task(
     Returns:
         Dictionary with transformation statistics
     """
-    from sqlalchemy import func
 
     logger = get_logger()
     logger.info("Starting contribution transformation to gold layer")
@@ -544,6 +543,9 @@ def transform_contributions_task(
             contributor_cache[key] = row["id"]
         logger.info(f"Cached {len(contributor_cache)} contributors")
 
+        # Free memory immediately after building cache
+        del contributor_df
+
         # Cache committees
         committee_cache = {}
         for committee in cache_session.execute(select(GoldCommittee)).scalars().all():
@@ -557,7 +559,6 @@ def transform_contributions_task(
         logger.info(f"Cached {len(candidate_cache)} candidates")
 
         # Cache existing contributions (source_sub_id -> True for dedup check)
-        existing_contributions = set()
         existing_df = pd.read_sql(
             select(GoldContribution.source_sub_id).where(GoldContribution.source_system == "FEC"),
             cache_session.connection(),
@@ -565,39 +566,12 @@ def transform_contributions_task(
         existing_contributions = set(existing_df["source_sub_id"].values)
         logger.info(f"Cached {len(existing_contributions)} existing contributions for dedup")
 
-    # Get count with a separate session
-    with get_session() as count_session:
-        # Build query for silver contributions
-        # OPTIMIZATION: Use NOT EXISTS to only select Silver records not yet in Gold
-        # This prevents re-transforming millions of already-processed records
-        subquery = (
-            select(GoldContribution.source_sub_id)
-            .where(
-                GoldContribution.source_system == "FEC",
-                GoldContribution.source_sub_id == SilverFECContribution.source_sub_id,
-            )
-            .exists()
-        )
+        # Free memory immediately after building cache
+        del existing_df
 
-        # Get total count for progress tracking (only count records not yet in Gold)
-        count_stmt = select(func.count()).select_from(SilverFECContribution).where(~subquery)
-        if cycle:
-            count_stmt = count_stmt.where(SilverFECContribution.election_cycle == cycle)
-
-        total_count = count_session.execute(count_stmt).scalar()
-        logger.info(f"Processing {total_count:,} silver contributions in chunks of {chunksize:,}")
-
-        if total_count == 0:
-            logger.warning("No contributions found in silver layer")
-            return {
-                "total_contributions": 0,
-                "loaded_count": 0,
-                "updated_count": 0,
-                "unresolved_contributors": 0,
-                "unresolved_committees": 0,
-                "unresolved_candidates": 0,
-                "chunks_processed": 0,
-            }
+    # Skip expensive count query - just process chunks until empty
+    # The NOT EXISTS + COUNT(*) query is too memory intensive on 13M+ rows
+    logger.info(f"Processing silver contributions in chunks of {chunksize:,}")
 
     # Process in chunks using cursor-based pagination
     total_processed = 0
