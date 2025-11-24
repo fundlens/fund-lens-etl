@@ -10,9 +10,7 @@ Transforms Silver layer data into Gold layer (analytics-ready dimensional model)
 
 from typing import Any, cast
 
-import numpy as np
 import pandas as pd
-import psycopg2.extensions
 from fund_lens_models.gold import (
     GoldCandidate,
     GoldCommittee,
@@ -30,12 +28,15 @@ from sqlalchemy import select
 
 from fund_lens_etl.database import get_session
 
-# Register NumPy type adapters for psycopg2
-# This allows psycopg2 to automatically convert numpy types to Python types
-psycopg2.extensions.register_adapter(np.int64, lambda x: int(x))
-psycopg2.extensions.register_adapter(np.int32, lambda x: int(x))
-psycopg2.extensions.register_adapter(np.float64, lambda x: float(x))
-psycopg2.extensions.register_adapter(np.float32, lambda x: float(x))
+
+def to_python_type(value: Any) -> Any:
+    """Convert numpy/pandas types to Python native types for database compatibility."""
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):  # numpy scalar
+        return value.item()
+    return value
+
 
 # Retry configuration for transformation tasks
 GOLD_RETRY_CONFIG = {
@@ -686,32 +687,25 @@ def transform_contributions_task(
             # Bulk insert new contributions
             if not valid_chunk.empty:
                 # Convert DataFrame to list of dicts
-                # NumPy types will be automatically converted by psycopg2 adapters
                 records = cast(list[dict[str, Any]], valid_chunk.to_dict("records"))
 
                 contributions = []
                 for record in records:
-                    # Handle nullable fields
-                    candidate_id = (
-                        record["candidate_id_gold"]
-                        if pd.notna(record["candidate_id_gold"])
-                        else None
-                    )
-
+                    # Convert all values to Python native types
                     contribution = GoldContribution(
-                        contributor_id=record["contributor_id_gold"],
-                        recipient_committee_id=record["committee_id_gold"],
-                        recipient_candidate_id=candidate_id,
-                        contribution_date=record["contribution_date"],
-                        amount=record["contribution_amount"],
-                        contribution_type=record.get("receipt_type") or "DIRECT",
-                        election_type=record.get("election_type"),
+                        contributor_id=to_python_type(record["contributor_id_gold"]),
+                        recipient_committee_id=to_python_type(record["committee_id_gold"]),
+                        recipient_candidate_id=to_python_type(record["candidate_id_gold"]),
+                        contribution_date=to_python_type(record["contribution_date"]),
+                        amount=to_python_type(record["contribution_amount"]),
+                        contribution_type=to_python_type(record.get("receipt_type")) or "DIRECT",
+                        election_type=to_python_type(record.get("election_type")),
                         source_system="FEC",
-                        source_transaction_id=record.get("transaction_id"),
-                        source_sub_id=record["source_sub_id"],
-                        election_year=record["election_cycle"],
-                        election_cycle=record["election_cycle"],
-                        memo_text=record.get("memo_text"),
+                        source_transaction_id=to_python_type(record.get("transaction_id")),
+                        source_sub_id=to_python_type(record["source_sub_id"]),
+                        election_year=to_python_type(record["election_cycle"]),
+                        election_cycle=to_python_type(record["election_cycle"]),
+                        memo_text=to_python_type(record.get("memo_text")),
                     )
                     contributions.append(contribution)
 
