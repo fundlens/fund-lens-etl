@@ -8,7 +8,7 @@ This module defines scheduled deployments for:
 """
 
 from prefect.client.schemas.schedules import CronSchedule
-from prefect.events import DeploymentCompletedTrigger
+from prefect.events import DeploymentEventTrigger
 
 # ============================================================================
 # Deployment Parameters
@@ -81,13 +81,13 @@ def create_silver_deployments():
             "cycle": DEFAULT_CYCLE,
         },
         triggers=[
-            DeploymentCompletedTrigger(
-                expect=["bronze-ingestion-all-states-daily"],
-                parameters=None,
+            DeploymentEventTrigger(
+                expect={"prefect.flow-run.Completed"},
+                match_related={"prefect.resource.name": "bronze-ingestion-all-states-daily"},
             ),
-            DeploymentCompletedTrigger(
-                expect=["monthly-bulk-reconciliation-2026"],
-                parameters=None,
+            DeploymentEventTrigger(
+                expect={"prefect.flow-run.Completed"},
+                match_related={"prefect.resource.name": "monthly-bulk-reconciliation-2026"},
             ),
         ],
         tags=["etl", "silver", "transformation", "triggered", "all-states"],
@@ -123,9 +123,11 @@ def create_gold_deployments():
             "cycle": DEFAULT_CYCLE,
         },
         triggers=[
-            DeploymentCompletedTrigger(
-                expect=["silver-transformation-all-states-triggered"],
-                parameters=None,
+            DeploymentEventTrigger(
+                expect={"prefect.flow-run.Completed"},
+                match_related={
+                    "prefect.resource.name": "silver-transformation-all-states-triggered"
+                },
             )
         ],
         tags=["etl", "gold", "analytics", "triggered", "all-states"],
