@@ -182,14 +182,19 @@ Examples:
 
 
 def main():
+    print("Entered main()", flush=True)
     # Setup logging
+    print("Setting up logging...", flush=True)
     log_file = setup_logging()
+    print(f"Log file created: {log_file}", flush=True)
     logger = logging.getLogger(__name__)
 
     logger.info(f"Logging to: {log_file}")
     logger.info(f"Stream logs with: tail -f {log_file}\n")
 
+    print("Parsing args...", flush=True)
     args = parse_args()
+    print(f"Args parsed: {args}", flush=True)
 
     logger.info("=" * 80)
     logger.info("UPDATE EXTRACTION STATES FROM DATABASE")
