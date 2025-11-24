@@ -527,24 +527,22 @@ def transform_contributions_task(
         logger.info("Building FK lookup caches...")
 
         # Cache contributors (name|city|state|employer -> id)
+        # Use SQLAlchemy streaming instead of pandas to avoid loading 1M+ rows into DataFrame
         contributor_cache = {}
-        contributor_df = pd.read_sql(
+        for contributor in cache_session.execute(
             select(
                 GoldContributor.id,
                 GoldContributor.name,
                 GoldContributor.city,
                 GoldContributor.state,
                 GoldContributor.employer,
-            ),
-            cache_session.connection(),
-        )
-        for _, row in contributor_df.iterrows():
-            key = f"{row['name']}|{row['city']}|{row['state']}|{row['employer']}"
-            contributor_cache[key] = row["id"]
+            )
+        ):
+            key = (
+                f"{contributor.name}|{contributor.city}|{contributor.state}|{contributor.employer}"
+            )
+            contributor_cache[key] = contributor.id
         logger.info(f"Cached {len(contributor_cache)} contributors")
-
-        # Free memory immediately after building cache
-        del contributor_df
 
         # Cache committees
         committee_cache = {}
@@ -558,16 +556,14 @@ def transform_contributions_task(
             candidate_cache[candidate.fec_candidate_id] = candidate.id
         logger.info(f"Cached {len(candidate_cache)} candidates")
 
-        # Cache existing contributions (source_sub_id -> True for dedup check)
-        existing_df = pd.read_sql(
-            select(GoldContribution.source_sub_id).where(GoldContribution.source_system == "FEC"),
-            cache_session.connection(),
-        )
-        existing_contributions = set(existing_df["source_sub_id"].values)
+        # Cache existing contributions (source_sub_id set for dedup check)
+        # Use SQLAlchemy streaming instead of pandas to avoid loading 100K+ rows into DataFrame
+        existing_contributions = set()
+        for row in cache_session.execute(
+            select(GoldContribution.source_sub_id).where(GoldContribution.source_system == "FEC")
+        ):
+            existing_contributions.add(row.source_sub_id)
         logger.info(f"Cached {len(existing_contributions)} existing contributions for dedup")
-
-        # Free memory immediately after building cache
-        del existing_df
 
     # Skip expensive count query - just process chunks until empty
     # The NOT EXISTS + COUNT(*) query is too memory intensive on 13M+ rows
@@ -864,6 +860,7 @@ def validate_gold_transformation_task(
 def gold_transformation_flow(
     state: str | None = None,
     cycle: int | None = None,
+    chunksize: int = 10_000,
 ) -> dict[str, Any]:
     """
     Main flow to transform silver layer data to gold layer.
@@ -878,6 +875,7 @@ def gold_transformation_flow(
     Args:
         state: Optional state filter (e.g., "MD")
         cycle: Optional election cycle filter (e.g., 2026)
+        chunksize: Records per chunk for contributions (default: 10000)
 
     Returns:
         Dictionary with comprehensive transformation statistics
@@ -920,7 +918,7 @@ def gold_transformation_flow(
 
     # Step 4: Transform contributions (requires all dimensions to be populated)
     logger.info("\nStep 4: Transforming contributions...")
-    contribution_stats = transform_contributions_task(state=state, cycle=cycle)
+    contribution_stats = transform_contributions_task(state=state, cycle=cycle, chunksize=chunksize)
     logger.info(
         f"✓ Contributions: {contribution_stats['loaded_count'] + contribution_stats['updated_count']} "
         f"(loaded: {contribution_stats['loaded_count']}, "

@@ -35,6 +35,12 @@ def main():
         type=int,
         help="Filter by election cycle (e.g., 2026)",
     )
+    parser.add_argument(
+        "--chunksize",
+        type=int,
+        default=10_000,
+        help="Number of records to process per chunk (default: 10000, reduce if OOM)",
+    )
 
     args = parser.parse_args()
 
@@ -43,6 +49,7 @@ def main():
     print("=" * 80)
     print(f"State filter: {args.state or 'None (all states)'}")
     print(f"Cycle filter: {args.cycle or 'None (all cycles)'}")
+    print(f"Chunk size: {args.chunksize:,}")
     print("=" * 80)
     print()
 
@@ -51,6 +58,7 @@ def main():
         results = gold_transformation_flow(
             state=args.state,
             cycle=args.cycle,
+            chunksize=args.chunksize,
         )
 
         print("\n" + "=" * 80)
