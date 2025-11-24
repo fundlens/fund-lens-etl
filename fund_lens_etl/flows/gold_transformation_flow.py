@@ -681,10 +681,17 @@ def transform_contributions_task(
 
                 contributions = []
                 for record in records:
+                    # Convert NaN to None for nullable fields
+                    candidate_id = (
+                        record["candidate_id_gold"]
+                        if pd.notna(record["candidate_id_gold"])
+                        else None
+                    )
+
                     contribution = GoldContribution(
                         contributor_id=record["contributor_id_gold"],
                         recipient_committee_id=record["committee_id_gold"],
-                        recipient_candidate_id=record["candidate_id_gold"],
+                        recipient_candidate_id=candidate_id,
                         contribution_date=record["contribution_date"],
                         amount=record["contribution_amount"],
                         contribution_type=record.get("receipt_type") or "DIRECT",
