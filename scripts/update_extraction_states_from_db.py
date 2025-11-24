@@ -249,5 +249,11 @@ def main():
 if __name__ == "__main__":
     print("Script starting...", flush=True)
     import sys
+    import traceback
     print(f"Args: {sys.argv}", flush=True)
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"ERROR: {e}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)
