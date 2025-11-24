@@ -2,12 +2,13 @@
 Prefect deployment schedules for FundLens ETL pipeline.
 
 This module defines scheduled deployments for:
-- Bronze ingestion (daily incremental for ALL states)
+- Bronze ingestion (daily incremental for ALL states, M-F at 1 AM)
 - Silver transformation (triggered after bronze completes)
 - Gold transformation (triggered after silver completes)
 """
 
 from prefect.client.schemas.schedules import CronSchedule
+from prefect.events import DeploymentCompletedTrigger
 
 # ============================================================================
 # Deployment Parameters
@@ -33,7 +34,7 @@ def create_bronze_deployments():
     """
     from fund_lens_etl.flows.bronze_all_states_flow import bronze_all_states_flow
 
-    # Daily incremental extraction for ALL states (weekdays only)
+    # Daily incremental extraction for ALL states (weekdays only at 1 AM)
     bronze_all_states_flow.from_source(
         source="/opt/fund-lens-etl",
         entrypoint="fund_lens_etl/flows/bronze_all_states_flow.py:bronze_all_states_flow",
@@ -45,11 +46,11 @@ def create_bronze_deployments():
             "full_refresh": False,
         },
         schedules=[
-            CronSchedule(cron="0 2 * * 1-5", timezone=TIMEZONE)  # 2 AM ET, Monday-Friday
+            CronSchedule(cron="0 1 * * 1-5", timezone=TIMEZONE)  # 1 AM ET, Monday-Friday
         ],
         tags=["etl", "bronze", "incremental", "daily", "all-states"],
-        description="Daily incremental extraction for all 51 states with 90-day lookback",
-        version="2.0.0",
+        description="Daily incremental extraction for all 51 states with 7-day lookback (M-F at 1 AM)",
+        version="3.0.0",
     )
 
     return 1
@@ -68,25 +69,30 @@ def create_silver_deployments():
     """
     from fund_lens_etl.flows.silver_transformation_flow import silver_transformation_flow
 
-    # Daily silver transformation for all states (runs after bronze ingestion)
+    # Silver transformation triggered by EITHER bronze ingestion OR monthly bulk reconciliation
     silver_transformation_flow.from_source(
         source="/opt/fund-lens-etl",
         entrypoint="fund_lens_etl/flows/silver_transformation_flow.py:silver_transformation_flow",
     ).deploy(
-        name="silver-transformation-all-states-daily",
+        name="silver-transformation-all-states-triggered",
         work_pool_name="default",
         parameters={
             "state": None,  # None = process all states
             "cycle": DEFAULT_CYCLE,
         },
-        schedules=[
-            CronSchedule(
-                cron="0 6 * * 1-5", timezone=TIMEZONE
-            )  # 6:00 AM ET, Monday-Friday (4 hours after bronze starts)
+        triggers=[
+            DeploymentCompletedTrigger(
+                expect=["bronze-ingestion-all-states-daily"],
+                parameters=None,
+            ),
+            DeploymentCompletedTrigger(
+                expect=["monthly-bulk-reconciliation-2026"],
+                parameters=None,
+            ),
         ],
-        tags=["etl", "silver", "transformation", "daily", "all-states"],
-        description="Daily transformation of bronze data to silver layer for all states",
-        version="2.0.0",
+        tags=["etl", "silver", "transformation", "triggered", "all-states"],
+        description="Silver transformation triggered by bronze daily ingestion OR monthly bulk reconciliation",
+        version="3.0.0",
     )
 
     return 1
@@ -105,25 +111,66 @@ def create_gold_deployments():
     """
     from fund_lens_etl.flows.gold_transformation_flow import gold_transformation_flow
 
-    # Daily gold transformation for all states (runs after silver transformation)
+    # Gold transformation triggered by silver transformation completion
     gold_transformation_flow.from_source(
         source="/opt/fund-lens-etl",
         entrypoint="fund_lens_etl/flows/gold_transformation_flow.py:gold_transformation_flow",
     ).deploy(
-        name="gold-transformation-all-states-daily",
+        name="gold-transformation-all-states-triggered",
         work_pool_name="default",
         parameters={
             "state": None,  # None = process all states
             "cycle": DEFAULT_CYCLE,
         },
-        schedules=[
-            CronSchedule(
-                cron="0 8 * * 1-5", timezone=TIMEZONE
-            )  # 8:00 AM ET, Monday-Friday (2 hours after silver)
+        triggers=[
+            DeploymentCompletedTrigger(
+                expect=["silver-transformation-all-states-triggered"],
+                parameters=None,
+            )
         ],
-        tags=["etl", "gold", "analytics", "daily", "all-states"],
-        description="Daily transformation of silver data to gold analytics layer for all states",
-        version="2.0.0",
+        tags=["etl", "gold", "analytics", "triggered", "all-states"],
+        description="Gold transformation triggered on silver transformation completion",
+        version="3.0.0",
+    )
+
+    return 1
+
+
+# ============================================================================
+# Monthly Bulk Reconciliation Deployment
+# ============================================================================
+
+
+def create_monthly_reconciliation_deployment():
+    """
+    Create and deploy monthly bulk reconciliation flow.
+
+    Returns the number of deployments created.
+    """
+    from fund_lens_etl.flows.monthly_bulk_reconciliation_flow import (
+        monthly_bulk_reconciliation_flow,
+    )
+
+    # Monthly bulk reconciliation on first Saturday at 1 AM
+    # This will trigger Silver → Gold just like daily incremental
+    monthly_bulk_reconciliation_flow.from_source(
+        source="/opt/fund-lens-etl",
+        entrypoint="fund_lens_etl/flows/monthly_bulk_reconciliation_flow.py:monthly_bulk_reconciliation_flow",
+    ).deploy(
+        name="monthly-bulk-reconciliation-2026",
+        work_pool_name="default",
+        parameters={
+            "election_cycle": DEFAULT_CYCLE,
+            "cleanup_after": True,
+        },
+        schedules=[
+            # First Saturday of each month at 1 AM ET
+            # Day 1-7 that is Saturday (day 6)
+            CronSchedule(cron="0 1 1-7 * 6", timezone=TIMEZONE)
+        ],
+        tags=["etl", "bulk", "reconciliation", "monthly"],
+        description="Monthly bulk data reconciliation on first Saturday at 1 AM (triggers Silver → Gold)",
+        version="3.0.0",
     )
 
     return 1
@@ -145,6 +192,7 @@ def create_all_deployments():
     total += create_bronze_deployments()
     total += create_silver_deployments()
     total += create_gold_deployments()
+    total += create_monthly_reconciliation_deployment()
     return total
 
 
@@ -159,20 +207,34 @@ def print_schedule_summary():
     print("FundLens ETL Pipeline - Deployment Schedules")
     print("=" * 80)
     print()
-    print("DAILY PIPELINE (Monday-Friday) - ALL 51 STATES:")
-    print("  2:00 AM ET - Bronze: Incremental ingestion (90-day lookback)")
-    print("              Runtime: ~2-4 hours for all states")
-    print("  6:00 AM ET - Silver: Transform bronze → silver")
-    print("              Runtime: ~30-60 minutes")
-    print("  8:00 AM ET - Gold: Transform silver → gold")
-    print("              Runtime: ~30-60 minutes")
+    print("WEEKDAY PIPELINE (Monday-Friday) - ALL 51 STATES:")
+    print("  1:00 AM ET - Bronze: Incremental ingestion (7-day lookback)")
+    print("               Runtime: ~2-4 hours")
+    print("               ↓")
+    print("  [TRIGGERED] Silver: Transform bronze → silver")
+    print("               Runtime: ~30-60 minutes")
+    print("               ↓")
+    print("  [TRIGGERED] Gold: Transform silver → gold")
+    print("               Runtime: ~30-60 minutes")
+    print()
+    print("MONTHLY RECONCILIATION (First Saturday) - ALL 51 STATES:")
+    print("  1:00 AM ET - Bulk: Download + reconcile (full data)")
+    print("               Runtime: ~2-3 hours")
+    print("               ↓")
+    print("  [TRIGGERED] Silver: Transform bronze → silver")
+    print("               Runtime: ~30-60 minutes")
+    print("               ↓")
+    print("  [TRIGGERED] Gold: Transform silver → gold")
+    print("               Runtime: ~30-60 minutes")
     print()
     print("CONFIGURATION:")
     print("  States: All 51 (50 states + DC)")
     print(f"  Cycle: {DEFAULT_CYCLE}")
     print(f"  Timezone: {TIMEZONE}")
-    print("  Total Deployments: 3 (Bronze, Silver, Gold)")
+    print("  Total Deployments: 4")
     print()
-    print("NOTE: No monthly full refresh. Daily incremental with 90-day lookback")
-    print("      is sufficient to catch late filings and amendments.")
+    print("TRIGGER CHAINS:")
+    print("  Daily:   Bronze → Silver → Gold (M-F)")
+    print("  Monthly: Bulk Reconciliation → Silver → Gold (1st Saturday)")
+    print("  Silver accepts triggers from BOTH Bronze and Bulk flows")
     print("=" * 80)
