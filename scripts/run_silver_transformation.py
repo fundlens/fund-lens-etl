@@ -92,9 +92,22 @@ def main():
         print("\n" + "=" * 80)
         print("TRANSFORMATION COMPLETE!")
         print("=" * 80)
-        print(f"Committees transformed: {results.get('committees_transformed', 0):,}")
-        print(f"Candidates transformed: {results.get('candidates_transformed', 0):,}")
-        print(f"Contributions transformed: {results.get('contributions_transformed', 0):,}")
+
+        # Extract counts from nested results structure
+        transformations = results.get("transformations", {})
+        summary = results.get("summary", {})
+
+        committees = transformations.get("committees", {})
+        candidates = transformations.get("candidates", {})
+        contributions = transformations.get("contributions", {})
+
+        print(f"Committees: {committees.get('bronze_records', 0):,} bronze → {committees.get('silver_records', 0):,} silver ({committees.get('skipped', 0):,} skipped)")
+        print(f"Candidates: {candidates.get('bronze_records', 0):,} bronze → {candidates.get('silver_records', 0):,} silver ({candidates.get('skipped', 0):,} skipped)")
+        print(f"Contributions: {contributions.get('bronze_records', 0):,} bronze → {contributions.get('silver_records', 0):,} silver ({contributions.get('skipped', 0):,} skipped)")
+        print()
+        print(f"Total Bronze processed: {summary.get('total_bronze_records', 0):,}")
+        print(f"Total Silver created: {summary.get('total_silver_records', 0):,}")
+        print(f"Total skipped (already exists): {summary.get('total_skipped', 0):,}")
         print("=" * 80)
 
         sys.exit(0)
