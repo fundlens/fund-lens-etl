@@ -679,15 +679,22 @@ def transform_contributions_task(
                 contributions = []
                 for _, row in valid_chunk.iterrows():
                     # Convert numpy types to Python native types for SQLAlchemy
+                    # Handle contribution_date - could be pandas Timestamp or Python date
+                    contrib_date = row["contribution_date"]
+                    if pd.notna(contrib_date):
+                        if hasattr(contrib_date, "to_pydatetime"):
+                            contrib_date = contrib_date.to_pydatetime().date()
+                        # else it's already a Python date object
+                    else:
+                        contrib_date = None
+
                     contribution = GoldContribution(
                         contributor_id=int(row["contributor_id_gold"]),
                         recipient_committee_id=int(row["committee_id_gold"]),
                         recipient_candidate_id=int(row["candidate_id_gold"])
                         if pd.notna(row["candidate_id_gold"])
                         else None,
-                        contribution_date=row["contribution_date"].to_pydatetime()
-                        if pd.notna(row["contribution_date"])
-                        else None,
+                        contribution_date=contrib_date,
                         amount=float(row["contribution_amount"])
                         if pd.notna(row["contribution_amount"])
                         else None,
