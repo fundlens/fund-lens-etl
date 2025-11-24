@@ -10,7 +10,9 @@ Transforms Silver layer data into Gold layer (analytics-ready dimensional model)
 
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
+import psycopg2.extensions
 from fund_lens_models.gold import (
     GoldCandidate,
     GoldCommittee,
@@ -27,6 +29,13 @@ from prefect.exceptions import MissingContextError
 from sqlalchemy import select
 
 from fund_lens_etl.database import get_session
+
+# Register NumPy type adapters for psycopg2
+# This allows psycopg2 to automatically convert numpy types to Python types
+psycopg2.extensions.register_adapter(np.int64, lambda x: int(x))
+psycopg2.extensions.register_adapter(np.int32, lambda x: int(x))
+psycopg2.extensions.register_adapter(np.float64, lambda x: float(x))
+psycopg2.extensions.register_adapter(np.float32, lambda x: float(x))
 
 # Retry configuration for transformation tasks
 GOLD_RETRY_CONFIG = {
@@ -676,41 +685,23 @@ def transform_contributions_task(
 
             # Bulk insert new contributions
             if not valid_chunk.empty:
-                # Convert DataFrame to list of dicts with Python native types
-                # This avoids numpy type issues with psycopg2
-                valid_chunk = valid_chunk.copy()
-
-                # Convert numeric columns to Python types
-                valid_chunk["contributor_id_gold"] = valid_chunk["contributor_id_gold"].apply(
-                    lambda x: int(x) if pd.notna(x) else None
-                )
-                valid_chunk["committee_id_gold"] = valid_chunk["committee_id_gold"].apply(
-                    lambda x: int(x) if pd.notna(x) else None
-                )
-                valid_chunk["candidate_id_gold"] = valid_chunk["candidate_id_gold"].apply(
-                    lambda x: int(x) if pd.notna(x) else None
-                )
-                valid_chunk["contribution_amount"] = valid_chunk["contribution_amount"].apply(
-                    lambda x: float(x) if pd.notna(x) else None
-                )
-                valid_chunk["election_cycle"] = valid_chunk["election_cycle"].apply(
-                    lambda x: int(x) if pd.notna(x) else None
-                )
-
-                # Convert to list of dicts (pure Python types)
+                # Convert DataFrame to list of dicts
+                # NumPy types will be automatically converted by psycopg2 adapters
                 records = cast(list[dict[str, Any]], valid_chunk.to_dict("records"))
 
                 contributions = []
                 for record in records:
-                    # Handle candidate_id (optional FK)
-                    candidate_id_val = record[
-                        "candidate_id_gold"
-                    ]  # Already converted to int or None
+                    # Handle nullable fields
+                    candidate_id = (
+                        record["candidate_id_gold"]
+                        if pd.notna(record["candidate_id_gold"])
+                        else None
+                    )
 
                     contribution = GoldContribution(
                         contributor_id=record["contributor_id_gold"],
                         recipient_committee_id=record["committee_id_gold"],
-                        recipient_candidate_id=candidate_id_val,
+                        recipient_candidate_id=candidate_id,
                         contribution_date=record["contribution_date"],
                         amount=record["contribution_amount"],
                         contribution_type=record.get("receipt_type") or "DIRECT",
