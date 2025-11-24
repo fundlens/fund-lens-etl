@@ -30,11 +30,24 @@ def setup_logging() -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_file = f"/tmp/update_extraction_states_{timestamp}.log"
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s",
-        handlers=[logging.FileHandler(log_file), logging.StreamHandler(sys.stdout)],
-    )
+    # Create handlers with explicit flush
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    file_handler.flush = lambda: file_handler.stream.flush() if file_handler.stream else None
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+
+    # Create formatter
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
 
     return log_file
 
@@ -210,10 +223,17 @@ def main():
     print("Getting committee IDs...", flush=True)
     if args.committees:
         committee_ids = args.committees
+        print(f"Using specified committees: {len(committee_ids)}", flush=True)
         logger.info(f"Processing {len(committee_ids)} specified committees")
     else:
+        print("Querying database for committees...", flush=True)
         logger.info("Finding all committees with contributions...")
-        committee_ids = get_all_committees_with_contributions(args.cycle)
+        try:
+            committee_ids = get_all_committees_with_contributions(args.cycle)
+            print(f"Found {len(committee_ids)} committees", flush=True)
+        except Exception as e:
+            print(f"ERROR querying committees: {e}", flush=True)
+            raise
 
     # Apply limit if specified
     if args.limit:
