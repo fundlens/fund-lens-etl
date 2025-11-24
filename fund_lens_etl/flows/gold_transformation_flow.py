@@ -676,48 +676,32 @@ def transform_contributions_task(
 
             # Bulk insert new contributions
             if not valid_chunk.empty:
+                # Convert DataFrame columns to Python native types BEFORE iterating
+                # This avoids numpy type issues with psycopg2
+                valid_chunk = valid_chunk.copy()
+                valid_chunk["contributor_id_gold"] = valid_chunk["contributor_id_gold"].astype(
+                    "Int64"
+                )
+                valid_chunk["committee_id_gold"] = valid_chunk["committee_id_gold"].astype("Int64")
+                valid_chunk["candidate_id_gold"] = valid_chunk["candidate_id_gold"].astype("Int64")
+                valid_chunk["contribution_amount"] = valid_chunk["contribution_amount"].astype(
+                    float
+                )
+                valid_chunk["election_cycle"] = valid_chunk["election_cycle"].astype("Int64")
+
                 contributions = []
                 for _, row in valid_chunk.iterrows():
-                    # Convert numpy types to Python native types for SQLAlchemy
-                    # Use .item() to convert numpy scalars to Python scalars
-
-                    # Handle contribution_date - could be pandas Timestamp or Python date
-                    contrib_date = row["contribution_date"]
-                    if pd.notna(contrib_date):
-                        if hasattr(contrib_date, "to_pydatetime"):
-                            contrib_date = contrib_date.to_pydatetime().date()
-                        # else it's already a Python date object
-                    else:
-                        contrib_date = None
-
                     # Handle candidate_id (optional FK)
                     candidate_id_val = None
                     if pd.notna(row["candidate_id_gold"]):
-                        candidate_id_val = (
-                            int(row["candidate_id_gold"].item())
-                            if hasattr(row["candidate_id_gold"], "item")
-                            else int(row["candidate_id_gold"])
-                        )
-
-                    # Handle election cycle
-                    election_cycle_val = row.get("election_cycle", 2026)
-                    if hasattr(election_cycle_val, "item"):
-                        election_cycle_val = int(election_cycle_val.item())
-                    else:
-                        election_cycle_val = int(election_cycle_val)
+                        candidate_id_val = int(row["candidate_id_gold"])
 
                     contribution = GoldContribution(
-                        contributor_id=int(row["contributor_id_gold"].item())
-                        if hasattr(row["contributor_id_gold"], "item")
-                        else int(row["contributor_id_gold"]),
-                        recipient_committee_id=int(row["committee_id_gold"].item())
-                        if hasattr(row["committee_id_gold"], "item")
-                        else int(row["committee_id_gold"]),
+                        contributor_id=int(row["contributor_id_gold"]),
+                        recipient_committee_id=int(row["committee_id_gold"]),
                         recipient_candidate_id=candidate_id_val,
-                        contribution_date=contrib_date,
-                        amount=float(row["contribution_amount"].item())
-                        if hasattr(row["contribution_amount"], "item")
-                        else float(row["contribution_amount"]),
+                        contribution_date=row["contribution_date"],
+                        amount=float(row["contribution_amount"]),
                         contribution_type=str(row.get("receipt_type"))
                         if pd.notna(row.get("receipt_type"))
                         else "DIRECT",
@@ -729,8 +713,8 @@ def transform_contributions_task(
                         if pd.notna(row["transaction_id"])
                         else None,
                         source_sub_id=str(row["source_sub_id"]),
-                        election_year=election_cycle_val,
-                        election_cycle=election_cycle_val,
+                        election_year=int(row["election_cycle"]),
+                        election_cycle=int(row["election_cycle"]),
                         memo_text=str(row.get("memo_text"))
                         if pd.notna(row.get("memo_text"))
                         else None,
