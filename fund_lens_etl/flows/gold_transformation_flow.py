@@ -8,7 +8,7 @@ Transforms Silver layer data into Gold layer (analytics-ready dimensional model)
 - Contributions: Create fact table with foreign keys to dimensions
 """
 
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 from fund_lens_models.gold import (
@@ -676,48 +676,51 @@ def transform_contributions_task(
 
             # Bulk insert new contributions
             if not valid_chunk.empty:
-                # Convert DataFrame columns to Python native types BEFORE iterating
+                # Convert DataFrame to list of dicts with Python native types
                 # This avoids numpy type issues with psycopg2
                 valid_chunk = valid_chunk.copy()
-                valid_chunk["contributor_id_gold"] = valid_chunk["contributor_id_gold"].astype(
-                    "Int64"
+
+                # Convert numeric columns to Python types
+                valid_chunk["contributor_id_gold"] = valid_chunk["contributor_id_gold"].apply(
+                    lambda x: int(x) if pd.notna(x) else None
                 )
-                valid_chunk["committee_id_gold"] = valid_chunk["committee_id_gold"].astype("Int64")
-                valid_chunk["candidate_id_gold"] = valid_chunk["candidate_id_gold"].astype("Int64")
-                valid_chunk["contribution_amount"] = valid_chunk["contribution_amount"].astype(
-                    float
+                valid_chunk["committee_id_gold"] = valid_chunk["committee_id_gold"].apply(
+                    lambda x: int(x) if pd.notna(x) else None
                 )
-                valid_chunk["election_cycle"] = valid_chunk["election_cycle"].astype("Int64")
+                valid_chunk["candidate_id_gold"] = valid_chunk["candidate_id_gold"].apply(
+                    lambda x: int(x) if pd.notna(x) else None
+                )
+                valid_chunk["contribution_amount"] = valid_chunk["contribution_amount"].apply(
+                    lambda x: float(x) if pd.notna(x) else None
+                )
+                valid_chunk["election_cycle"] = valid_chunk["election_cycle"].apply(
+                    lambda x: int(x) if pd.notna(x) else None
+                )
+
+                # Convert to list of dicts (pure Python types)
+                records = cast(list[dict[str, Any]], valid_chunk.to_dict("records"))
 
                 contributions = []
-                for _, row in valid_chunk.iterrows():
+                for record in records:
                     # Handle candidate_id (optional FK)
-                    candidate_id_val = None
-                    if pd.notna(row["candidate_id_gold"]):
-                        candidate_id_val = int(row["candidate_id_gold"])
+                    candidate_id_val = record[
+                        "candidate_id_gold"
+                    ]  # Already converted to int or None
 
                     contribution = GoldContribution(
-                        contributor_id=int(row["contributor_id_gold"]),
-                        recipient_committee_id=int(row["committee_id_gold"]),
+                        contributor_id=record["contributor_id_gold"],
+                        recipient_committee_id=record["committee_id_gold"],
                         recipient_candidate_id=candidate_id_val,
-                        contribution_date=row["contribution_date"],
-                        amount=float(row["contribution_amount"]),
-                        contribution_type=str(row.get("receipt_type"))
-                        if pd.notna(row.get("receipt_type"))
-                        else "DIRECT",
-                        election_type=str(row.get("election_type"))
-                        if pd.notna(row.get("election_type"))
-                        else None,
+                        contribution_date=record["contribution_date"],
+                        amount=record["contribution_amount"],
+                        contribution_type=record.get("receipt_type") or "DIRECT",
+                        election_type=record.get("election_type"),
                         source_system="FEC",
-                        source_transaction_id=str(row["transaction_id"])
-                        if pd.notna(row["transaction_id"])
-                        else None,
-                        source_sub_id=str(row["source_sub_id"]),
-                        election_year=int(row["election_cycle"]),
-                        election_cycle=int(row["election_cycle"]),
-                        memo_text=str(row.get("memo_text"))
-                        if pd.notna(row.get("memo_text"))
-                        else None,
+                        source_transaction_id=record.get("transaction_id"),
+                        source_sub_id=record["source_sub_id"],
+                        election_year=record["election_cycle"],
+                        election_cycle=record["election_cycle"],
+                        memo_text=record.get("memo_text"),
                     )
                     contributions.append(contribution)
 
