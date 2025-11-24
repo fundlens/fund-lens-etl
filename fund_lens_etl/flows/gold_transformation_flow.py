@@ -489,7 +489,7 @@ def transform_candidates_task(
     description="Transform contributions from silver to gold fact table with FK resolution",
     retries=GOLD_RETRY_CONFIG["retries"],
     retry_delay_seconds=GOLD_RETRY_CONFIG["retry_delay_seconds"],
-    timeout_seconds=GOLD_TASK_TIMEOUT * 4,  # 2 hours for large datasets
+    timeout_seconds=86400,  # 24 hours for initial backfill of 13M+ records
 )
 def transform_contributions_task(
     state: str | None = None,
