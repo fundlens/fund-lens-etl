@@ -247,4 +247,7 @@ def main():
 
 
 if __name__ == "__main__":
+    print("Script starting...", flush=True)
+    import sys
+    print(f"Args: {sys.argv}", flush=True)
     main()
