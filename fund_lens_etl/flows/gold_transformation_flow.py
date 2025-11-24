@@ -676,26 +676,39 @@ def transform_contributions_task(
 
             # Bulk insert new contributions
             if not valid_chunk.empty:
-                contributions = [
-                    GoldContribution(
+                contributions = []
+                for _, row in valid_chunk.iterrows():
+                    # Convert numpy types to Python native types for SQLAlchemy
+                    contribution = GoldContribution(
                         contributor_id=int(row["contributor_id_gold"]),
                         recipient_committee_id=int(row["committee_id_gold"]),
                         recipient_candidate_id=int(row["candidate_id_gold"])
                         if pd.notna(row["candidate_id_gold"])
                         else None,
-                        contribution_date=row["contribution_date"],
-                        amount=row["contribution_amount"],
-                        contribution_type=row.get("receipt_type") or "DIRECT",
-                        election_type=row.get("election_type"),
+                        contribution_date=row["contribution_date"].to_pydatetime()
+                        if pd.notna(row["contribution_date"])
+                        else None,
+                        amount=float(row["contribution_amount"])
+                        if pd.notna(row["contribution_amount"])
+                        else None,
+                        contribution_type=str(row.get("receipt_type"))
+                        if pd.notna(row.get("receipt_type"))
+                        else "DIRECT",
+                        election_type=str(row.get("election_type"))
+                        if pd.notna(row.get("election_type"))
+                        else None,
                         source_system="FEC",
-                        source_transaction_id=row["transaction_id"],
-                        source_sub_id=row["source_sub_id"],
-                        election_year=row.get("election_cycle", 2026),
-                        election_cycle=row.get("election_cycle", 2026),
-                        memo_text=row.get("memo_text"),
+                        source_transaction_id=str(row["transaction_id"])
+                        if pd.notna(row["transaction_id"])
+                        else None,
+                        source_sub_id=str(row["source_sub_id"]),
+                        election_year=int(row.get("election_cycle", 2026)),
+                        election_cycle=int(row.get("election_cycle", 2026)),
+                        memo_text=str(row.get("memo_text"))
+                        if pd.notna(row.get("memo_text"))
+                        else None,
                     )
-                    for _, row in valid_chunk.iterrows()
-                ]
+                    contributions.append(contribution)
 
                 session.add_all(contributions)
                 session.commit()
