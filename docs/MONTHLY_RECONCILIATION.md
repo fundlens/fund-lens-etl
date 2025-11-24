@@ -19,7 +19,7 @@ The monthly bulk reconciliation flow downloads fresh FEC bulk data and reconcile
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  Daily Incremental (API)          Monthly Reconciliation     │
-│  ├─ Fast (7-day lookback)         ├─ Comprehensive          │
+│  ├─ Fast (1-day lookback)         ├─ Comprehensive          │
 │  ├─ New contributions only        ├─ Full bulk file         │
 │  ├─ ~minutes per run              ├─ Catches amendments     │
 │  └─ Runs: Every day at 1 AM       └─ Runs: 1st of month     │
@@ -29,7 +29,7 @@ The monthly bulk reconciliation flow downloads fresh FEC bulk data and reconcile
 
 ### Benefits
 
-1. **Fast Daily Updates**: 7-day lookback keeps daily runs fast
+1. **Fast Daily Updates**: 1-day lookback keeps daily runs fast
 2. **Comprehensive Monthly Sync**: Bulk file catches everything missed
 3. **Amendment Detection**: Late filings and corrections are reconciled
 4. **Data Quality**: UPSERT logic ensures latest data always wins
@@ -233,7 +233,7 @@ parameters={
 
 **Daily Incremental (API)**:
 - Runs every day at 1 AM
-- Uses 7-day lookback from last extraction
+- Uses 1-day lookback from last extraction
 - Fast, only gets recent data
 - Updates extraction states after each run
 

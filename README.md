@@ -23,9 +23,9 @@ Monthly (1st Sat @ 1 AM ET):
 ### Hybrid Update Strategy
 
 **Daily Incremental** (Weekdays)
-- Fast API extraction with 7-day lookback
+- Fast API extraction with 1-day lookback
 - Captures recent contributions and updates
-- Runtime: ~4 hours (Bronze → Silver → Gold)
+- Runtime: ~30-60 min (Bronze → Silver → Gold)
 
 **Monthly Reconciliation** (First Saturday)
 - Complete bulk file download and UPSERT
@@ -44,7 +44,7 @@ Monthly (1st Sat @ 1 AM ET):
 
 ### Intelligent Extraction
 - **State management**: Per-committee extraction state with automatic checkpointing
-- **Smart lookback**: 7-day lookback for daily runs, monthly reconciliation for completeness
+- **Smart lookback**: 1-day lookback for daily runs, monthly reconciliation for completeness
 - **Resume capability**: Automatic recovery from failures with page-level checkpointing
 - See: [`docs/EXTRACTION_STATE_FIX.md`](docs/EXTRACTION_STATE_FIX.md)
 
@@ -142,7 +142,7 @@ docs/
 
 **Daily Incremental (API)**
 - All 51 states (50 states + DC)
-- 7-day lookback from last extraction
+- 1-day lookback from last extraction
 - Committees, candidates, individual contributions (Schedule A)
 - Page-by-page streaming with automatic checkpointing
 
@@ -250,7 +250,7 @@ This pipeline implements several optimizations over traditional ETL approaches:
 
 1. **Event-Driven vs Time-Based**: Triggers ensure correct execution order and eliminate idle time
 2. **Hybrid Updates**: Daily incremental (fast) + monthly bulk (comprehensive)
-3. **Smart Lookback**: 7 days instead of 180 (95% faster daily runs)
+3. **Smart Lookback**: 1 day instead of 180 (99% faster daily runs)
 4. **Bulk Optimization**: UPSERT skips existing records (10x faster reconciliation)
 5. **State Management**: Automatic extraction state synchronization
 6. **Unified Pipeline**: Same Silver/Gold flows for both daily and monthly data

@@ -88,13 +88,14 @@ class Settings(BaseSettings):
     batch_size: int = 1000
 
     # Incremental Load Configuration
-    # With bulk backfill + monthly reconciliation, minimal lookback is needed.
-    # 7-day lookback accounts for:
-    # - Recent filing delays
-    # - Last-minute amendments
-    # - API vs bulk file sync lag
-    # Note: Monthly bulk reconciliation catches older amendments
-    lookback_days: int = 7
+    # With monthly bulk reconciliation (1st Saturday), 1-day lookback is optimal.
+    # Daily incremental only needs to catch new filings since last run (24 hours).
+    # Monthly bulk reconciliation handles:
+    # - All historical amendments and corrections
+    # - Late filings and delayed submissions
+    # - Any data missed during daily runs
+    # 1-day lookback = fast daily updates + comprehensive monthly reconciliation
+    lookback_days: int = 1
     sort_order: str = "asc"
 
     # Rate Limiting

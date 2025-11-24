@@ -100,7 +100,7 @@ poetry run prefect flow-run logs <flow-run-id>
 
 1. ✅ **Deployed**: Monthly reconciliation is scheduled
 2. ✅ **Daily runs**: Continue running as normal
-3. ✅ **Lookback reduced**: From 180 days to 7 days (fast daily runs)
+3. ✅ **Lookback reduced**: From 180 days to 1 day (fast daily runs)
 4. 🎯 **First monthly run**: Wait for 1st of next month or trigger manually
 
 ## Summary
@@ -109,7 +109,7 @@ You now have a robust data ingestion strategy:
 
 | Type | Frequency | Speed | Coverage |
 |------|-----------|-------|----------|
-| **Daily Incremental** | Every day 1 AM | Fast (~minutes) | Last 7 days |
+| **Daily Incremental** | Every day 1 AM | Fast (~30-60 min) | Last 1 day |
 | **Monthly Reconciliation** | 1st of month 2 AM | Slow (~2-3 hours) | Complete |
 
 **Result**: Fast daily updates + comprehensive monthly synchronization

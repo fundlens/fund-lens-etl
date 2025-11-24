@@ -49,7 +49,7 @@ def create_bronze_deployments():
             CronSchedule(cron="0 1 * * 1-5", timezone=TIMEZONE)  # 1 AM ET, Monday-Friday
         ],
         tags=["etl", "bronze", "incremental", "daily", "all-states"],
-        description="Daily incremental extraction for all 51 states with 7-day lookback (M-F at 1 AM)",
+        description="Daily incremental extraction for all 51 states with 1-day lookback (M-F at 1 AM)",
         version="3.0.0",
     )
 
@@ -208,8 +208,8 @@ def print_schedule_summary():
     print("=" * 80)
     print()
     print("WEEKDAY PIPELINE (Monday-Friday) - ALL 51 STATES:")
-    print("  1:00 AM ET - Bronze: Incremental ingestion (7-day lookback)")
-    print("               Runtime: ~2-4 hours")
+    print("  1:00 AM ET - Bronze: Incremental ingestion (1-day lookback)")
+    print("               Runtime: ~30-60 minutes")
     print("               ↓")
     print("  [TRIGGERED] Silver: Transform bronze → silver")
     print("               Runtime: ~30-60 minutes")

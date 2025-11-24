@@ -11,7 +11,7 @@ Monday-Friday @ 1:00 AM ET
          ↓
     [SCHEDULED]
   Bronze Ingestion
-  (7-day lookback)
+  (1-day lookback)
     ~2-4 hours
          ↓
     [TRIGGERED]
@@ -29,7 +29,7 @@ Silver Transformation
 
 - **Schedule**: Monday-Friday at 1:00 AM Eastern Time
 - **Trigger Type**: Cron schedule
-- **Lookback**: 7 days
+- **Lookback**: 1 day
 - **States**: All 51 (50 states + DC)
 - **Runtime**: ~2-4 hours
 

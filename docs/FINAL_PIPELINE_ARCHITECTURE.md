@@ -6,7 +6,7 @@
 
 The FundLens ETL pipeline uses a **hybrid event-driven architecture** with two distinct update paths:
 
-1. **Daily Incremental** (M-F): Fast, 7-day lookback API extraction
+1. **Daily Incremental** (M-F): Fast, 1-day lookback API extraction
 2. **Monthly Reconciliation** (1st Saturday): Comprehensive bulk file reconciliation
 
 Both paths trigger the same Silver → Gold transformation chain, ensuring all data flows through the complete pipeline.
@@ -20,9 +20,9 @@ Both paths trigger the same Silver → Gold transformation chain, ensuring all d
 ├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  1:00 AM ET - Bronze Ingestion (API)                        │
-│               ├─ 7-day lookback                             │
+│               ├─ 1-day lookback                              │
 │               ├─ Incremental extraction                      │
-│               └─ ~2-4 hours                                  │
+│               └─ ~30-60 minutes                              │
 │                    ↓ [TRIGGER]                               │
 │  ~3-5 AM ET - Silver Transformation                          │
 │               ├─ Bronze → Silver                             │
@@ -63,9 +63,9 @@ Both paths trigger the same Silver → Gold transformation chain, ensuring all d
 **Deployment**: `bronze-ingestion-all-states-daily`
 - **Schedule**: Monday-Friday at 1:00 AM ET
 - **Trigger Type**: Cron schedule `0 1 * * 1-5`
-- **Lookback**: 7 days
+- **Lookback**: 1 day
 - **States**: All 51
-- **Runtime**: ~2-4 hours
+- **Runtime**: ~30-60 minutes
 - **Version**: 3.0.0
 
 ### 2. Monthly Bulk Reconciliation (Scheduled)
@@ -163,7 +163,7 @@ Gold Transformation (same deployment as daily)
 - No weekend daily runs (reduces costs/complexity)
 
 ### 5. Comprehensive Coverage
-- Daily: Fast updates (7-day lookback)
+- Daily: Fast updates (1-day lookback)
 - Monthly: Complete reconciliation (catches all amendments)
 - Together: Best of both worlds
 
@@ -171,7 +171,7 @@ Gold Transformation (same deployment as daily)
 
 ### Daily Incremental (M-F)
 - **Freshness**: Within ~24 hours (runs every weekday)
-- **Coverage**: Last 7 days of data
+- **Coverage**: Last 1 day of data
 - **Use Case**: Regular updates, recent contributions
 
 ### Monthly Reconciliation (1st Saturday)
@@ -240,8 +240,8 @@ FundLens ETL Pipeline - Deployment Schedules
 ================================================================================
 
 WEEKDAY PIPELINE (Monday-Friday) - ALL 51 STATES:
-  1:00 AM ET - Bronze: Incremental ingestion (7-day lookback)
-               Runtime: ~2-4 hours
+  1:00 AM ET - Bronze: Incremental ingestion (1-day lookback)
+               Runtime: ~30-60 minutes
                ↓
   [TRIGGERED] Silver: Transform bronze → silver
                Runtime: ~30-60 minutes
@@ -322,10 +322,10 @@ poetry run prefect deployment run \
 
 ### Daily Run (M-F)
 - **Start**: 1:00 AM ET
-- **Bronze Complete**: ~3:30 AM
-- **Silver Complete**: ~4:15 AM
-- **Gold Complete**: ~5:00 AM
-- **Total Duration**: ~4 hours
+- **Bronze Complete**: ~1:45 AM
+- **Silver Complete**: ~2:15 AM
+- **Gold Complete**: ~2:45 AM
+- **Total Duration**: ~2 hours
 
 ### Monthly Run (1st Saturday)
 - **Start**: 1:00 AM ET
@@ -344,7 +344,7 @@ poetry run prefect deployment run \
 ## Summary
 
 This architecture provides:
-- ✅ **Fast daily updates** (7-day lookback)
+- ✅ **Fast daily updates** (1-day lookback)
 - ✅ **Comprehensive monthly reconciliation** (full dataset)
 - ✅ **Event-driven triggers** (guaranteed ordering)
 - ✅ **Unified transformation pipeline** (no duplication)

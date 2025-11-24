@@ -41,13 +41,13 @@ git pull origin main
 Expected output: Updated files related to:
 - `fund_lens_etl/deployments/schedules.py`
 - `fund_lens_etl/flows/monthly_bulk_reconciliation_flow.py`
-- `fund_lens_etl/config.py` (lookback_days = 7)
+- `fund_lens_etl/config.py` (lookback_days = 1)
 - `scripts/update_extraction_states_from_db.py`
 - Various docs/ files
 
 ### 2. Update Extraction States
 ```bash
-# This ensures all committees have current states for 7-day lookback
+# This ensures all committees have current states for 1-day lookback
 poetry run python scripts/update_extraction_states_from_db.py --cycle 2026
 ```
 
@@ -145,8 +145,8 @@ FundLens ETL Pipeline - Deployment Schedules
 ================================================================================
 
 WEEKDAY PIPELINE (Monday-Friday) - ALL 51 STATES:
-  1:00 AM ET - Bronze: Incremental ingestion (7-day lookback)
-               Runtime: ~2-4 hours
+  1:00 AM ET - Bronze: Incremental ingestion (1-day lookback)
+               Runtime: ~30-60 minutes
                ↓
   [TRIGGERED] Silver: Transform bronze → silver
                Runtime: ~30-60 minutes
@@ -300,7 +300,7 @@ git checkout main
 **Issue**: Bronze still using 180-day lookback
 
 **Solution**:
-1. Verify config.py has `lookback_days: int = 7`
+1. Verify config.py has `lookback_days: int = 1`
 2. Re-run state update: `poetry run python scripts/update_extraction_states_from_db.py --cycle 2026`
 3. Check extraction state in database for sample committee
 

@@ -11,8 +11,10 @@ The bulk ingestion flow **did not update extraction states** after loading contr
 1. Bulk file loaded contributions with `source_system = 'FEC_BULK'`
 2. The `bronze_fec_extraction_state` table was never updated with these bulk-loaded contributions
 3. Daily incremental flow calculated start date using old/missing extraction state
-4. With the 180-day lookback, it calculated `start_date = 2025-01-01`
+4. With the old 180-day lookback, it calculated `start_date = 2025-01-01`
 5. This caused re-extraction of ~39K records that already existed in the database
+
+**Note**: Lookback is now 1 day with monthly bulk reconciliation, making this much faster.
 
 ### Example from Logs
 
@@ -101,7 +103,8 @@ From `fund_lens_etl/utils/extraction_state.py:calculate_incremental_start_date()
 lookback_date = state.last_contribution_date - timedelta(days=lookback_days)
 ```
 
-**Default lookback:** 180 days (configured in `config.py`)
+**Current lookback:** 1 day (configured in `config.py`)
+**Old lookback:** Was 180 days before monthly reconciliation
 
 **Why lookback?**
 - FEC filings can be late (up to 45 days after quarter end)
@@ -121,7 +124,7 @@ With ~39K records × 100 per page = 393 pages × ~3 seconds/page = **~20 minutes
 ### What Happens With Extraction State
 
 If extraction state exists:
-1. Calculates `start_date = last_contribution_date - 180 days`
+1. Calculates `start_date = last_contribution_date - 1 day` (was 180 days before monthly reconciliation)
 2. API extractor uses date filter: `contribution_receipt_date >= start_date`
 3. Only fetches new/amended contributions
 4. Typically 0-10 pages instead of 393 pages
@@ -163,12 +166,14 @@ Total available: 39,285 records, 393 pages
 Time: ~20 minutes
 ```
 
-**After (with extraction state):**
+**After (with extraction state + 1-day lookback):**
 ```
-Incremental extraction starting from 2024-07-15 (180 days lookback from last extraction)
-Total available: 127 records, 2 pages
-Time: ~10 seconds
+Incremental extraction starting from 2024-11-23 (1 day lookback from last extraction)
+Total available: 12 records, 1 page
+Time: ~5 seconds
 ```
+
+**Note**: With monthly bulk reconciliation, 1-day lookback is optimal. Monthly bulk ensures all historical data is complete.
 
 ## Prevention
 
