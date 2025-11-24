@@ -220,30 +220,22 @@ def transform_contributors_task(
         updated_count = 0
         insert_chunksize = 10_000
 
-        # Get existing contributors in bulk to avoid repeated queries
+        # Get existing contributors using streaming to avoid loading 1M+ rows into DataFrame
         logger.info("Fetching existing contributors from gold layer...")
-        existing_contributors_df = pd.read_sql(
+        existing_lookup = set()
+        for contributor in session.execute(
             select(
-                GoldContributor.id,
                 GoldContributor.name,
                 GoldContributor.city,
                 GoldContributor.state,
                 GoldContributor.employer,
-            ),
-            session.connection(),
-        )
-
-        # Create lookup key for existing contributors
-        if not existing_contributors_df.empty:
-            existing_contributors_df["lookup_key"] = existing_contributors_df.apply(
-                lambda r: f"{r['name']}|{r['city']}|{r['state']}|{r['employer']}",
-                axis=1,
             )
-            existing_lookup = set(existing_contributors_df["lookup_key"].values)
-            logger.info(f"Found {len(existing_lookup)} existing contributors in gold layer")
-        else:
-            existing_lookup = set()
-            logger.info("No existing contributors found in gold layer")
+        ):
+            key = (
+                f"{contributor.name}|{contributor.city}|{contributor.state}|{contributor.employer}"
+            )
+            existing_lookup.add(key)
+        logger.info(f"Found {len(existing_lookup)} existing contributors in gold layer")
 
         # Create lookup key for deduplicated contributors
         df_deduped["lookup_key"] = df_deduped.apply(
@@ -304,10 +296,18 @@ def transform_contributors_task(
                 f"Skipping updates for {len(existing_contributors)} existing contributors (performance optimization)"
             )
 
+        # Store stats before cleanup
+        total_silver = len(df)
+        total_gold = len(df_deduped)
+        dedup_rate = dedup_count / len(df) if len(df) > 0 else 0.0
+
+        # Explicit cleanup of large DataFrames to free memory before next task
+        del df, df_deduped, new_contributors, existing_contributors, existing_lookup
+
         return {
-            "total_silver_contributors": len(df),
-            "total_gold_contributors": len(df_deduped),
-            "deduplication_rate": dedup_count / len(df) if len(df) > 0 else 0.0,
+            "total_silver_contributors": total_silver,
+            "total_gold_contributors": total_gold,
+            "deduplication_rate": dedup_rate,
             "loaded_count": loaded_count,
             "updated_count": updated_count,
         }
@@ -556,14 +556,10 @@ def transform_contributions_task(
             candidate_cache[candidate.fec_candidate_id] = candidate.id
         logger.info(f"Cached {len(candidate_cache)} candidates")
 
-        # Cache existing contributions (source_sub_id set for dedup check)
-        # Use SQLAlchemy streaming instead of pandas to avoid loading 100K+ rows into DataFrame
-        existing_contributions = set()
-        for row in cache_session.execute(
-            select(GoldContribution.source_sub_id).where(GoldContribution.source_system == "FEC")
-        ):
-            existing_contributions.add(row.source_sub_id)
-        logger.info(f"Cached {len(existing_contributions)} existing contributions for dedup")
+    # Initialize set to track contributions inserted during THIS run
+    # (NOT EXISTS filter handles pre-existing contributions, this prevents
+    # re-inserting records added in earlier chunks of the same run)
+    contributions_inserted_this_run: set[str] = set()
 
     # Skip expensive count query - just process chunks until empty
     # The NOT EXISTS + COUNT(*) query is too memory intensive on 13M+ rows
@@ -642,7 +638,9 @@ def transform_contributions_task(
             ].copy()
 
             # Filter out existing contributions using cache
-            valid_chunk = valid_chunk[~valid_chunk["source_sub_id"].isin(existing_contributions)]
+            valid_chunk = valid_chunk[
+                ~valid_chunk["source_sub_id"].isin(contributions_inserted_this_run)
+            ]
 
             # Bulk insert new contributions
             if not valid_chunk.empty:
@@ -680,7 +678,7 @@ def transform_contributions_task(
                 loaded_count += len(contributions)
 
                 # Add to existing set to avoid re-inserting in later chunks
-                existing_contributions.update(valid_chunk["source_sub_id"].values)
+                contributions_inserted_this_run.update(valid_chunk["source_sub_id"].values)
 
             chunks_processed += 1
 
