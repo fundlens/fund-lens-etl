@@ -67,22 +67,17 @@ def main():
         # Display entity counts
         print(
             f"Contributors: {contributor_stats.get('total_gold_contributors', 0):,} unique "
-            f"(from {contributor_stats.get('total_silver_contributors', 0):,} silver records)"
+            f"(from {contributor_stats.get('total_silver_contributors', 0):,} silver records, "
+            f"{contributor_stats.get('loaded_count', 0):,} new this run)"
         )
         print(
-            f"Committees: {committee_stats.get('total_committees', 0):,} "
-            f"({committee_stats.get('loaded_count', 0):,} new, "
-            f"{committee_stats.get('updated_count', 0):,} updated)"
+            f"Committees: {committee_stats.get('loaded_count', 0):,} new"
         )
         print(
-            f"Candidates: {candidate_stats.get('total_candidates', 0):,} "
-            f"({candidate_stats.get('loaded_count', 0):,} new, "
-            f"{candidate_stats.get('updated_count', 0):,} updated)"
+            f"Candidates: {candidate_stats.get('loaded_count', 0):,} new"
         )
         print(
-            f"Contributions: {contribution_stats.get('loaded_count', 0) + contribution_stats.get('updated_count', 0):,} "
-            f"({contribution_stats.get('loaded_count', 0):,} new, "
-            f"{contribution_stats.get('updated_count', 0):,} updated)"
+            f"Contributions: {contribution_stats.get('loaded_count', 0):,} new"
         )
 
         # Display any warnings
