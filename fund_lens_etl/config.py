@@ -88,11 +88,13 @@ class Settings(BaseSettings):
     batch_size: int = 1000
 
     # Incremental Load Configuration
-    # 180-day lookback accounts for:
-    # - Quarterly filing deadlines (~45 days after quarter end)
-    # - Late amendments to previous filings
-    # - FEC processing delays
-    lookback_days: int = 180
+    # With bulk backfill + monthly reconciliation, minimal lookback is needed.
+    # 7-day lookback accounts for:
+    # - Recent filing delays
+    # - Last-minute amendments
+    # - API vs bulk file sync lag
+    # Note: Monthly bulk reconciliation catches older amendments
+    lookback_days: int = 7
     sort_order: str = "asc"
 
     # Rate Limiting

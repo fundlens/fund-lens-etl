@@ -195,21 +195,15 @@ Examples:
 
 
 def main():
-    print("Entered main()", flush=True)
     # Setup logging
-    print("Setting up logging...", flush=True)
     log_file = setup_logging()
-    print(f"Log file created: {log_file}", flush=True)
     logger = logging.getLogger(__name__)
 
     logger.info(f"Logging to: {log_file}")
     logger.info(f"Stream logs with: tail -f {log_file}\n")
 
-    print("Parsing args...", flush=True)
     args = parse_args()
-    print(f"Args parsed: {args}", flush=True)
 
-    print("Starting logger output...", flush=True)
     logger.info("=" * 80)
     logger.info("UPDATE EXTRACTION STATES FROM DATABASE")
     logger.info("=" * 80)
@@ -217,23 +211,14 @@ def main():
     logger.info(f"Dry run: {args.dry_run}")
     logger.info("=" * 80)
     logger.info("")
-    print("Logger output completed", flush=True)
 
     # Get committee IDs to process
-    print("Getting committee IDs...", flush=True)
     if args.committees:
         committee_ids = args.committees
-        print(f"Using specified committees: {len(committee_ids)}", flush=True)
         logger.info(f"Processing {len(committee_ids)} specified committees")
     else:
-        print("Querying database for committees...", flush=True)
         logger.info("Finding all committees with contributions...")
-        try:
-            committee_ids = get_all_committees_with_contributions(args.cycle)
-            print(f"Found {len(committee_ids)} committees", flush=True)
-        except Exception as e:
-            print(f"ERROR querying committees: {e}", flush=True)
-            raise
+        committee_ids = get_all_committees_with_contributions(args.cycle)
 
     # Apply limit if specified
     if args.limit:
@@ -275,13 +260,4 @@ def main():
 
 
 if __name__ == "__main__":
-    print("Script starting...", flush=True)
-    import sys
-    import traceback
-    print(f"Args: {sys.argv}", flush=True)
-    try:
-        main()
-    except Exception as e:
-        print(f"ERROR: {e}", flush=True)
-        traceback.print_exc()
-        sys.exit(1)
+    main()

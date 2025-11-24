@@ -45,10 +45,10 @@ def calculate_incremental_start_date(
     If no state exists, returns None (full extraction).
 
     The lookback window accounts for:
-    - Quarterly FEC filing deadlines (up to 45 days after quarter end)
-    - Late amendments to previous filings
-    - FEC data processing delays
-    Default: 180 days (configured in settings)
+    - Recent filing delays
+    - Last-minute amendments
+    - API vs bulk file sync lag
+    Default: 7 days (with bulk backfill + monthly reconciliation)
 
     Args:
         session: SQLAlchemy session
