@@ -39,9 +39,6 @@ def setup_logging() -> str:
     return log_file
 
 
-logger = logging.getLogger(__name__)
-
-
 def get_all_committees_with_contributions(election_cycle: int) -> list[str]:
     """
     Get all unique committee IDs that have contributions in the database.
@@ -52,6 +49,8 @@ def get_all_committees_with_contributions(election_cycle: int) -> list[str]:
     Returns:
         List of committee IDs
     """
+    logger = logging.getLogger(__name__)
+
     with get_session() as session:
         stmt = (
             select(distinct(BronzeFECScheduleA.committee_id))
@@ -80,6 +79,7 @@ def update_extraction_states(
     Returns:
         Dict with statistics
     """
+    logger = logging.getLogger(__name__)
     updated_count = 0
     skipped_count = 0
     total = len(committee_ids)
@@ -184,6 +184,8 @@ Examples:
 def main():
     # Setup logging
     log_file = setup_logging()
+    logger = logging.getLogger(__name__)
+
     logger.info(f"Logging to: {log_file}")
     logger.info(f"Stream logs with: tail -f {log_file}\n")
 
