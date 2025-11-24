@@ -28,16 +28,6 @@ from sqlalchemy import select
 
 from fund_lens_etl.database import get_session
 
-
-def to_python_type(value: Any) -> Any:
-    """Convert numpy/pandas types to Python native types for database compatibility."""
-    if pd.isna(value):
-        return None
-    if hasattr(value, "item"):  # numpy scalar
-        return value.item()
-    return value
-
-
 # Retry configuration for transformation tasks
 GOLD_RETRY_CONFIG = {
     "retries": 3,
@@ -654,8 +644,8 @@ def transform_contributions_task(
             chunk_size = len(chunk_df)
             total_processed += chunk_size
 
-            # Update cursor to last id in this chunk
-            last_id = chunk_df["id"].iloc[-1]
+            # Update cursor to last id in this chunk (convert to Python int)
+            last_id = int(chunk_df["id"].iloc[-1])
 
             # OPTIMIZED: Bulk resolve FKs using cache lookups
             # Create lookup key for contributors
@@ -691,21 +681,20 @@ def transform_contributions_task(
 
                 contributions = []
                 for record in records:
-                    # Convert all values to Python native types
                     contribution = GoldContribution(
-                        contributor_id=to_python_type(record["contributor_id_gold"]),
-                        recipient_committee_id=to_python_type(record["committee_id_gold"]),
-                        recipient_candidate_id=to_python_type(record["candidate_id_gold"]),
-                        contribution_date=to_python_type(record["contribution_date"]),
-                        amount=to_python_type(record["contribution_amount"]),
-                        contribution_type=to_python_type(record.get("receipt_type")) or "DIRECT",
-                        election_type=to_python_type(record.get("election_type")),
+                        contributor_id=record["contributor_id_gold"],
+                        recipient_committee_id=record["committee_id_gold"],
+                        recipient_candidate_id=record["candidate_id_gold"],
+                        contribution_date=record["contribution_date"],
+                        amount=record["contribution_amount"],
+                        contribution_type=record.get("receipt_type") or "DIRECT",
+                        election_type=record.get("election_type"),
                         source_system="FEC",
-                        source_transaction_id=to_python_type(record.get("transaction_id")),
-                        source_sub_id=to_python_type(record["source_sub_id"]),
-                        election_year=to_python_type(record["election_cycle"]),
-                        election_cycle=to_python_type(record["election_cycle"]),
-                        memo_text=to_python_type(record.get("memo_text")),
+                        source_transaction_id=record.get("transaction_id"),
+                        source_sub_id=record["source_sub_id"],
+                        election_year=record["election_cycle"],
+                        election_cycle=record["election_cycle"],
+                        memo_text=record.get("memo_text"),
                     )
                     contributions.append(contribution)
 
