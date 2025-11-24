@@ -196,6 +196,7 @@ def main():
     args = parse_args()
     print(f"Args parsed: {args}", flush=True)
 
+    print("Starting logger output...", flush=True)
     logger.info("=" * 80)
     logger.info("UPDATE EXTRACTION STATES FROM DATABASE")
     logger.info("=" * 80)
@@ -203,8 +204,10 @@ def main():
     logger.info(f"Dry run: {args.dry_run}")
     logger.info("=" * 80)
     logger.info("")
+    print("Logger output completed", flush=True)
 
     # Get committee IDs to process
+    print("Getting committee IDs...", flush=True)
     if args.committees:
         committee_ids = args.committees
         logger.info(f"Processing {len(committee_ids)} specified committees")
