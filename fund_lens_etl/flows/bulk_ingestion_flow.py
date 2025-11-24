@@ -35,6 +35,16 @@ class ContributionFileInfo(TypedDict):
     estimated_records: str
 
 
+class BulkContributionResults(TypedDict):
+    """Type definition for bulk contribution extraction results."""
+
+    total_records: int
+    new_records: int
+    skipped_existing: int
+    chunks_processed: int
+    committees_seen: list[str]
+
+
 # Configuration
 BULK_RETRY_CONFIG = {
     "retries": 2,
@@ -151,7 +161,7 @@ def extract_contributions_from_bulk_task(
     election_cycle: int,
     file_type: str = "indiv",
     chunksize: int = 10_000,
-) -> dict[str, int]:
+) -> BulkContributionResults:
     """
     Extract and load contributions from bulk file in chunks.
 
@@ -173,7 +183,7 @@ def extract_contributions_from_bulk_task(
         chunksize: Records per chunk (default 10K, smaller = faster with existing data)
 
     Returns:
-        Dict with total_records, new_records, skipped_records, and chunks_processed
+        Dict with total_records, new_records, skipped_records, chunks_processed, and committees_updated
     """
     from fund_lens_models.bronze import BronzeFECScheduleA
     from prefect import get_run_logger
@@ -190,6 +200,7 @@ def extract_contributions_from_bulk_task(
     new_records = 0
     skipped_existing = 0
     chunks_processed = 0
+    committees_seen: set[str] = set()  # Track unique committees for state updates
 
     # Process in chunks
     for chunk_df in extractor.extract_chunked(
@@ -201,6 +212,10 @@ def extract_contributions_from_bulk_task(
         chunks_processed += 1
         chunk_size = len(chunk_df)
         total_records += chunk_size
+
+        # Track committees in this chunk
+        if "committee_id" in chunk_df.columns:
+            committees_seen.update(chunk_df["committee_id"].dropna().unique())
 
         # Check which sub_id values already exist in the database
         with get_session() as session:
@@ -248,6 +263,91 @@ def extract_contributions_from_bulk_task(
         "new_records": new_records,
         "skipped_existing": skipped_existing,
         "chunks_processed": chunks_processed,
+        "committees_seen": list(committees_seen),
+    }
+
+
+@task(
+    name="update_extraction_states_for_bulk",
+    retries=BULK_RETRY_CONFIG["retries"],
+    retry_delay_seconds=BULK_RETRY_CONFIG["retry_delay_seconds"],
+    timeout_seconds=BULK_TIMEOUT,
+)
+def update_extraction_states_for_bulk_task(
+    committee_ids: list[str],
+    election_cycle: int,
+) -> dict[str, int]:
+    """
+    Update extraction states for committees after bulk load.
+
+    This ensures that incremental API extractions know about the bulk-loaded data
+    and don't re-extract records that already exist.
+
+    For each committee, queries the database for the latest contribution date
+    and updates the extraction state accordingly.
+
+    Args:
+        committee_ids: List of committee IDs that had contributions loaded
+        election_cycle: Election cycle year
+
+    Returns:
+        Dict with statistics on state updates
+    """
+    from prefect import get_run_logger
+
+    from fund_lens_etl.utils.extraction_state import (
+        get_last_contribution_info,
+        update_extraction_state,
+    )
+
+    logger = get_run_logger()
+    logger.info(f"Updating extraction states for {len(committee_ids):,} committees...")
+
+    updated_count = 0
+    skipped_count = 0
+
+    with get_session() as session:
+        for committee_id in committee_ids:
+            # Get the latest contribution info for this committee
+            last_contrib_info = get_last_contribution_info(
+                session=session,
+                committee_id=committee_id,
+                election_cycle=election_cycle,
+            )
+
+            if last_contrib_info:
+                last_date, last_sub_id = last_contrib_info
+
+                # Update extraction state with full refresh markers
+                update_extraction_state(
+                    session=session,
+                    committee_id=committee_id,
+                    election_cycle=election_cycle,
+                    last_contribution_date=last_date,
+                    last_sub_id=last_sub_id,
+                    total_records_extracted=0,  # Don't count bulk records in extraction total
+                    extraction_start_date=None,  # None indicates full load
+                    extraction_end_date=None,
+                    is_complete=True,
+                    last_page_processed=0,
+                )
+                updated_count += 1
+            else:
+                skipped_count += 1
+
+            # Log progress every 100 committees
+            if (updated_count + skipped_count) % 100 == 0:
+                logger.info(
+                    f"Progress: {updated_count + skipped_count}/{len(committee_ids)} committees processed"
+                )
+
+    logger.info(
+        f"Completed: {updated_count:,} states updated, {skipped_count:,} skipped (no contributions found)"
+    )
+
+    return {
+        "updated": updated_count,
+        "skipped": skipped_count,
     }
 
 
@@ -426,6 +526,9 @@ def bulk_ingestion_flow(
         total_contributions_loaded = 0
         total_contributions_skipped = 0
         total_chunks = 0
+        all_committees_seen: set[str] = (
+            set()
+        )  # Track all unique committees across all contribution types
 
         for contrib_type in contribution_types:
             if contrib_type not in contribution_file_mapping:
@@ -463,6 +566,9 @@ def bulk_ingestion_flow(
             total_chunks += contribution_results["chunks_processed"]
             results["contribution_types_processed"].append(contrib_type)
 
+            # Collect committees from this contribution type
+            all_committees_seen.update(contribution_results.get("committees_seen", []))
+
             logger.info(
                 f"  ✓ {contrib_type}: {contribution_results['total_records']:,} processed, "
                 f"{contribution_results['new_records']:,} new, "
@@ -479,6 +585,26 @@ def bulk_ingestion_flow(
             f"{total_contributions_skipped:,} skipped, "
             f"{total_chunks} chunks"
         )
+
+        # Update extraction states for all committees that had contributions loaded
+        if all_committees_seen:
+            logger.info(
+                f"\nStep 4: Updating extraction states for {len(all_committees_seen):,} committees..."
+            )
+            state_update_results = update_extraction_states_for_bulk_task(
+                committee_ids=list(all_committees_seen),
+                election_cycle=election_cycle,
+            )
+            results["extraction_states_updated"] = state_update_results["updated"]
+            results["extraction_states_skipped"] = state_update_results["skipped"]
+            logger.info(
+                f"✓ Updated {state_update_results['updated']:,} extraction states, "
+                f"skipped {state_update_results['skipped']:,}"
+            )
+        else:
+            logger.info("\nNo committees found, skipping extraction state updates")
+            results["extraction_states_updated"] = 0
+            results["extraction_states_skipped"] = 0
     else:
         logger.info("Skipping contributions (load_contributions=False)")
         results["contributions_loaded"] = 0
@@ -496,6 +622,8 @@ def bulk_ingestion_flow(
         f"Contributions loaded: {results.get('contributions_loaded', 0):,} "
         f"({results.get('contribution_chunks', 0)} chunks)"
     )
+    if results.get("extraction_states_updated", 0) > 0:
+        logger.info(f"Extraction states updated: {results.get('extraction_states_updated', 0):,}")
     logger.info("=" * 80)
 
     return results
