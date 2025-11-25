@@ -8,6 +8,7 @@ Transforms Silver layer data into Gold layer (analytics-ready dimensional model)
 - Contributions: Create fact table with foreign keys to dimensions
 """
 
+import re
 from typing import Any, cast
 
 import pandas as pd
@@ -24,7 +25,7 @@ from fund_lens_models.silver import (
 )
 from prefect import flow, get_run_logger, task
 from prefect.exceptions import MissingContextError
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from fund_lens_etl.database import get_session
 
@@ -46,11 +47,57 @@ def get_logger():
         return logging.getLogger(__name__)
 
 
+def _normalize_org_name(name: str) -> str:
+    """
+    Normalize an organization name for matching.
+
+    Removes punctuation, standardizes whitespace, and uppercases.
+    This allows matching variations like:
+    - "TRUMP NATIONAL COMMITTEE JFC INC." vs "TRUMP NATIONAL COMMITTEE JFC, INC."
+    - "ACTBLUE, LLC" vs "ACTBLUE LLC"
+
+    Args:
+        name: Organization name
+
+    Returns:
+        Normalized name string
+    """
+    if not name:
+        return ""
+    # Remove common punctuation (commas, periods, hyphens, apostrophes)
+    normalized = re.sub(r'[,.\-\'"()]', "", name)
+    # Collapse multiple spaces to single space
+    normalized = re.sub(r"\s+", " ", normalized)
+    # Uppercase and strip
+    return normalized.upper().strip()
+
+
+def _is_organization(entity_type: str | None) -> bool:
+    """
+    Check if entity type represents an organization (not an individual).
+
+    Organizations can be safely deduplicated by name alone since
+    "WINRED" in Arlington VA is the same as "WINRED" in Arlington VT.
+
+    Args:
+        entity_type: FEC entity type code
+
+    Returns:
+        True if this is an organization type
+    """
+    if not entity_type:
+        return False
+    # These are organization types - NOT individuals
+    # IND = Individual, so we exclude it
+    return entity_type.upper() in {"PAC", "COM", "ORG", "CCM", "PTY"}
+
+
 def _normalize_contributor_key(
     name: str | None,
     city: str | None,
     state: str | None,
     employer: str | None,
+    entity_type: str | None = None,
 ) -> str:
     """
     Create a normalized key for contributor matching.
@@ -58,16 +105,33 @@ def _normalize_contributor_key(
     Used for entity resolution - contributors with the same key are considered
     the same person/entity.
 
+    For organizations (PAC, COM, ORG, etc.):
+    - Name is normalized (punctuation removed)
+    - Location is IGNORED (same org regardless of city/state variations)
+
+    For individuals:
+    - Full matching on name + city + state + employer
+
     Args:
         name: Contributor name
         city: Contributor city
         state: Contributor state
         employer: Contributor employer
+        entity_type: FEC entity type (IND, PAC, COM, ORG, etc.)
 
     Returns:
         Normalized key string for matching (uppercase, stripped)
     """
-    # Normalize each component (uppercase, strip whitespace, handle nulls)
+    # Check if this is an organization
+    if _is_organization(entity_type):
+        # For organizations: normalize name, ignore location
+        # This merges "WINRED" in VA with "WINRED" in VT (data entry errors)
+        # and "TRUMP NATIONAL COMMITTEE JFC INC." with "TRUMP NATIONAL COMMITTEE JFC, INC."
+        name_norm = _normalize_org_name(name or "")
+        return f"ORG|{name_norm}"
+
+    # For individuals: use full matching including location
+    # This prevents merging different "JOHN SMITH" contributors
     name_norm = (name or "").upper().strip()
     city_norm = (city or "").upper().strip()
     state_norm = (state or "").upper().strip()
@@ -197,8 +261,11 @@ def transform_contributors_task(
         )
 
         # Create normalized key for deduplication
+        # Pass entity_type to apply different logic for organizations vs individuals
         df["match_key"] = df.apply(
-            lambda r: _normalize_contributor_key(r["name"], r["city"], r["state"], r["employer"]),
+            lambda r: _normalize_contributor_key(
+                r["name"], r["city"], r["state"], r["employer"], r["entity_type"]
+            ),
             axis=1,
         )
 
@@ -229,17 +296,26 @@ def transform_contributors_task(
                 GoldContributor.city,
                 GoldContributor.state,
                 GoldContributor.employer,
+                GoldContributor.entity_type,
             )
         ):
-            key = (
-                f"{contributor.name}|{contributor.city}|{contributor.state}|{contributor.employer}"
+            # Use same normalized key logic for consistency
+            key = _normalize_contributor_key(
+                contributor.name,
+                contributor.city,
+                contributor.state,
+                contributor.employer,
+                contributor.entity_type,
             )
             existing_lookup.add(key)
         logger.info(f"Found {len(existing_lookup)} existing contributors in gold layer")
 
-        # Create lookup key for deduplicated contributors
+        # Create lookup key for deduplicated contributors (same normalization as existing_lookup)
         df_deduped["lookup_key"] = df_deduped.apply(
-            lambda r: f"{r['name']}|{r['city']}|{r['state']}|{r['employer']}", axis=1
+            lambda r: _normalize_contributor_key(
+                r["name"], r["city"], r["state"], r["employer"], r["entity_type"]
+            ),
+            axis=1,
         )
 
         # Split into new vs existing
@@ -526,7 +602,7 @@ def transform_contributions_task(
     with get_session() as cache_session:
         logger.info("Building FK lookup caches...")
 
-        # Cache contributors (name|city|state|employer -> id)
+        # Cache contributors (normalized_key -> id)
         # Use SQLAlchemy streaming instead of pandas to avoid loading 1M+ rows into DataFrame
         contributor_cache = {}
         for contributor in cache_session.execute(
@@ -536,10 +612,16 @@ def transform_contributions_task(
                 GoldContributor.city,
                 GoldContributor.state,
                 GoldContributor.employer,
+                GoldContributor.entity_type,
             )
         ):
-            key = (
-                f"{contributor.name}|{contributor.city}|{contributor.state}|{contributor.employer}"
+            # Use normalized key for consistent matching with organizations
+            key = _normalize_contributor_key(
+                contributor.name,
+                contributor.city,
+                contributor.state,
+                contributor.employer,
+                contributor.entity_type,
             )
             contributor_cache[key] = contributor.id
         logger.info(f"Cached {len(contributor_cache)} contributors")
@@ -614,9 +696,15 @@ def transform_contributions_task(
             last_id = int(chunk_df["id"].iloc[-1])
 
             # OPTIMIZED: Bulk resolve FKs using cache lookups
-            # Create lookup key for contributors
+            # Create lookup key for contributors (using normalized key for org matching)
             chunk_df["contributor_key"] = chunk_df.apply(
-                lambda r: f"{r['contributor_name']}|{r['contributor_city']}|{r['contributor_state']}|{r['contributor_employer']}",
+                lambda r: _normalize_contributor_key(
+                    r["contributor_name"],
+                    r["contributor_city"],
+                    r["contributor_state"],
+                    r["contributor_employer"],
+                    r["entity_type"],
+                ),
                 axis=1,
             )
 
@@ -712,6 +800,81 @@ def transform_contributions_task(
         "unresolved_committees": unresolved_committees,
         "unresolved_candidates": unresolved_candidates,
         "chunks_processed": chunks_processed,
+    }
+
+
+@task(
+    name="reconcile_earmarked_contributions",
+    description="Mark earmark receipt records and link conduit committees",
+    retries=GOLD_RETRY_CONFIG["retries"],
+    retry_delay_seconds=GOLD_RETRY_CONFIG["retry_delay_seconds"],
+    timeout_seconds=GOLD_TASK_TIMEOUT,
+)
+def reconcile_earmarked_contributions_task() -> dict[str, Any]:
+    """
+    Reconcile earmarked contribution pairs to prevent double-counting.
+
+    FEC earmarked contributions appear twice:
+    1. Receipt by committee (type 15E, transaction_id = 'XXXXX')
+    2. Earmark to final recipient (transaction_id = 'XXXXXE')
+
+    This task:
+    - Marks the 15E receipt records with is_earmark_receipt=True
+    - Sets conduit_committee_id on the earmark records (optional future enhancement)
+
+    Only records with is_earmark_receipt=False should be included in contribution totals.
+
+    Returns:
+        Dictionary with reconciliation statistics
+    """
+    logger = get_logger()
+    logger.info("Reconciling earmarked contributions...")
+
+    with get_session() as session:
+        # Mark 15E records that have matching earmark records as earmark receipts
+        # The matching earmark has transaction_id = base_transaction_id || 'E'
+        result = session.execute(
+            text("""
+            UPDATE gold_contribution g1
+            SET is_earmark_receipt = TRUE
+            WHERE g1.contribution_type = '15E'
+              AND g1.is_earmark_receipt = FALSE
+              AND EXISTS (
+                  SELECT 1 FROM gold_contribution g2
+                  WHERE g2.source_transaction_id = g1.source_transaction_id || 'E'
+                    AND g2.source_system = g1.source_system
+              )
+        """)
+        )
+        marked_count = result.rowcount
+        session.commit()
+
+        logger.info(f"✓ Marked {marked_count:,} earmark receipt records")
+
+        # Get stats on earmark distribution
+        stats_result = session.execute(
+            text("""
+            SELECT
+                COUNT(*) FILTER (WHERE is_earmark_receipt = TRUE) as earmark_receipts,
+                COUNT(*) FILTER (WHERE is_earmark_receipt = FALSE) as canonical_contributions,
+                COUNT(*) as total
+            FROM gold_contribution
+        """)
+        ).fetchone()
+
+        earmark_receipts = stats_result[0] if stats_result else 0
+        canonical_contributions = stats_result[1] if stats_result else 0
+        total = stats_result[2] if stats_result else 0
+
+        logger.info(f"  Earmark receipts (excluded from stats): {earmark_receipts:,}")
+        logger.info(f"  Canonical contributions: {canonical_contributions:,}")
+        logger.info(f"  Total records: {total:,}")
+
+    return {
+        "marked_count": marked_count,
+        "earmark_receipts": earmark_receipts,
+        "canonical_contributions": canonical_contributions,
+        "total_contributions": total,
     }
 
 
@@ -850,6 +1013,75 @@ def validate_gold_transformation_task(
     }
 
 
+@task(
+    name="refresh_materialized_views",
+    description="Refresh materialized views after gold transformation",
+    retries=GOLD_RETRY_CONFIG["retries"],
+    retry_delay_seconds=GOLD_RETRY_CONFIG["retry_delay_seconds"],
+    timeout_seconds=GOLD_TASK_TIMEOUT,
+)
+def refresh_materialized_views_task() -> dict[str, Any]:
+    """
+    Refresh materialized views that depend on gold layer data.
+
+    Currently refreshes:
+    - mv_candidate_stats: Pre-computed candidate fundraising statistics
+    - mv_contributor_stats: Pre-computed contributor fundraising statistics
+
+    Uses CONCURRENTLY to allow reads during refresh (requires unique index).
+
+    Returns:
+        Dictionary with refresh status and timing
+    """
+    logger = get_logger()
+    logger.info("Refreshing materialized views...")
+
+    import time
+
+    results = {}
+
+    def refresh_view(session, view_name: str) -> dict[str, Any]:
+        """Refresh a single materialized view with fallback."""
+        start_time = time.time()
+        try:
+            session.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {view_name}"))
+            session.commit()
+            elapsed = time.time() - start_time
+            logger.info(f"✓ Refreshed {view_name} in {elapsed:.2f}s")
+            return {"status": "success", "elapsed_seconds": round(elapsed, 2)}
+        except Exception as e:
+            # If CONCURRENTLY fails (e.g., no unique index), try without it
+            logger.warning(f"CONCURRENTLY refresh failed for {view_name}, trying standard: {e}")
+            session.rollback()
+            start_time = time.time()
+            session.execute(text(f"REFRESH MATERIALIZED VIEW {view_name}"))
+            session.commit()
+            elapsed = time.time() - start_time
+            logger.info(f"✓ Refreshed {view_name} (non-concurrent) in {elapsed:.2f}s")
+            return {"status": "success_non_concurrent", "elapsed_seconds": round(elapsed, 2)}
+
+    views_to_refresh = [
+        "mv_candidate_stats",
+        "mv_contributor_stats",
+        "mv_committee_stats",
+        "mv_contributor_committee_stats",
+        "mv_contributor_candidate_stats",
+    ]
+
+    with get_session() as session:
+        for view_name in views_to_refresh:
+            try:
+                results[view_name] = refresh_view(session, view_name)
+            except Exception as e:
+                logger.error(f"Failed to refresh {view_name}: {e}")
+                results[view_name] = {"status": "failed", "error": str(e)}
+
+    return {
+        "views_refreshed": list(results.keys()),
+        "details": results,
+    }
+
+
 @flow(
     name="gold_transformation_flow",
     description="Transform silver layer data to gold layer (analytics-ready)",
@@ -868,7 +1100,9 @@ def gold_transformation_flow(
     2. Transform committees
     3. Transform candidates
     4. Transform contributions (with FK resolution)
-    5. Validate results
+    5. Reconcile earmarked contributions (mark duplicates)
+    6. Validate results
+    7. Refresh materialized views (for API performance)
 
     Args:
         state: Optional state filter (e.g., "MD")
@@ -934,14 +1168,27 @@ def gold_transformation_flow(
             "due to unresolved committees"
         )
 
-    # Step 5: Validate transformation
-    logger.info("\nStep 5: Validating transformation...")
+    # Step 5: Reconcile earmarked contributions (mark duplicates)
+    logger.info("\nStep 5: Reconciling earmarked contributions...")
+    earmark_stats = reconcile_earmarked_contributions_task()
+    logger.info(
+        f"✓ Earmarks: {earmark_stats['marked_count']:,} receipts marked, "
+        f"{earmark_stats['canonical_contributions']:,} canonical contributions"
+    )
+
+    # Step 6: Validate transformation
+    logger.info("\nStep 6: Validating transformation...")
     validation_stats = validate_gold_transformation_task(
         contributor_stats=contributor_stats,
         committee_stats=committee_stats,
         candidate_stats=candidate_stats,
         contribution_stats=contribution_stats,
     )
+
+    # Step 7: Refresh materialized views (for API performance)
+    logger.info("\nStep 7: Refreshing materialized views...")
+    refresh_stats = refresh_materialized_views_task()
+    logger.info(f"✓ Refreshed views: {refresh_stats['views_refreshed']}")
 
     # Summary
     logger.info("\n" + "=" * 60)
@@ -970,6 +1217,8 @@ def gold_transformation_flow(
         "committee_stats": committee_stats,
         "candidate_stats": candidate_stats,
         "contribution_stats": contribution_stats,
+        "earmark_stats": earmark_stats,
         "validation_stats": validation_stats,
+        "refresh_stats": refresh_stats,
         "success": validation_stats["validation_passed"],
     }
