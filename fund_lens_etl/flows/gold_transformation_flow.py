@@ -851,6 +851,25 @@ def reconcile_earmarked_contributions_task() -> dict[str, Any]:
 
         logger.info(f"✓ Marked {marked_count:,} earmark receipt records")
 
+        # Set conduit_committee_id on earmark records
+        # The earmark record (transaction_id ending in 'E') gets the committee_id
+        # from the matching 15E receipt record (the conduit that passed it through)
+        conduit_result = session.execute(
+            text("""
+            UPDATE gold_contribution earmark
+            SET conduit_committee_id = receipt.recipient_committee_id
+            FROM gold_contribution receipt
+            WHERE earmark.source_transaction_id = receipt.source_transaction_id || 'E'
+              AND earmark.source_system = receipt.source_system
+              AND receipt.contribution_type = '15E'
+              AND earmark.conduit_committee_id IS NULL
+        """)
+        )
+        conduit_count = conduit_result.rowcount
+        session.commit()
+
+        logger.info(f"✓ Set conduit_committee_id on {conduit_count:,} earmark records")
+
         # Get stats on earmark distribution
         stats_result = session.execute(
             text("""
@@ -872,6 +891,7 @@ def reconcile_earmarked_contributions_task() -> dict[str, Any]:
 
     return {
         "marked_count": marked_count,
+        "conduit_count": conduit_count,
         "earmark_receipts": earmark_receipts,
         "canonical_contributions": canonical_contributions,
         "total_contributions": total,
