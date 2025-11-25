@@ -18,6 +18,7 @@ IMPORTANT: After ETL runs that modify gold_contribution, refresh the view:
 from typing import Sequence, Union
 
 from alembic import op
+import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
@@ -28,14 +29,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create materialized view and indexes for candidate stats."""
-    # Add composite index on gold_contribution for stats aggregation queries
-    # This helps even without the materialized view for other queries
-    op.execute("""
+    # For CONCURRENTLY operations, we need to be outside a transaction
+    # This connection will be used for the concurrent index creation
+    connection = op.get_bind()
+
+    # Set the connection to autocommit mode for CREATE INDEX CONCURRENTLY
+    connection.execute(sa.text("COMMIT"))  # End any open transaction
+
+    # Now create the index concurrently
+    connection.execute(sa.text("""
         CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_gold_contribution_candidate_stats
         ON gold_contribution (recipient_candidate_id, amount)
         WHERE recipient_candidate_id IS NOT NULL
-    """)
+    """))
 
     # Create materialized view for pre-computed candidate stats
     # Excludes:
