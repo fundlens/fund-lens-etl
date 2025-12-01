@@ -353,9 +353,16 @@ class BronzeToSilverMarylandCommitteeTransformer(BaseTransformer):
 
         df = df.rename(columns=column_mapping)
 
-        # 2. Parse dates
+        # 2. Parse dates (convert NaT to None for PostgreSQL compatibility)
         df["registered_date"] = df["registered_date_str"].apply(parse_maryland_date)
         df["amended_date"] = df["amended_date_str"].apply(parse_maryland_date)
+        # Convert to object dtype and replace NaT/NaN with None for PostgreSQL
+        df["registered_date"] = (
+            df["registered_date"].astype(object).where(df["registered_date"].notna(), None)
+        )
+        df["amended_date"] = (
+            df["amended_date"].astype(object).where(df["amended_date"].notna(), None)
+        )
 
         # 3. Determine active status
         df["is_active"] = df["status"].str.lower() == "active"
