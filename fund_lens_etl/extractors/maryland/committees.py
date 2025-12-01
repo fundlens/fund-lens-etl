@@ -102,13 +102,16 @@ class MarylandCommitteeExtractor(BaseExtractor):
         # Rename columns to match model
         df = df.rename(columns=self.COLUMN_MAPPING)
 
-        # Strip whitespace from string columns
+        # Strip whitespace and normalize null values
         for col in df.columns:
             if df[col].dtype == object:
                 df[col] = df[col].str.strip()
-
-        # Replace empty strings with None
-        df = df.replace({"": None, "nan": None, "NaN": None})
+                # Replace various null representations with actual None
+                df[col] = df[col].apply(
+                    lambda x: None
+                    if x in ("", "nan", "NaN", "None", "NULL", "null") or pd.isna(x)
+                    else x
+                )
 
         # Ensure ccf_id is present and not null
         if "ccf_id" not in df.columns:

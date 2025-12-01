@@ -109,14 +109,16 @@ class MarylandContributionExtractor(BaseExtractor):
         # Rename columns to match model
         df = df.rename(columns=self.COLUMN_MAPPING)
 
-        # Strip whitespace from string columns and normalize nulls
+        # Strip whitespace and normalize null values
         for col in df.columns:
             if df[col].dtype == object:
                 df[col] = df[col].str.strip()
-                # Replace various null representations with None
-                df[col] = df[col].replace({"": None, "nan": None, "NaN": None, "None": None})
-                # Also handle pandas NA
-                df[col] = df[col].where(df[col].notna(), None)
+                # Replace various null representations with actual None
+                df[col] = df[col].apply(
+                    lambda x: None
+                    if x in ("", "nan", "NaN", "None", "NULL", "null") or pd.isna(x)
+                    else x
+                )
 
         # Generate content hash for deduplication
         df["content_hash"] = df.apply(
