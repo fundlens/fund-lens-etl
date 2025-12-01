@@ -16,6 +16,10 @@ from fund_lens_models.bronze import (
     BronzeFECCommittee,
     BronzeFECExtractionState,
     BronzeFECScheduleA,
+    BronzeMarylandCandidate,
+    BronzeMarylandCommittee,
+    BronzeMarylandContribution,
+    BronzeMarylandExtractionState,
 )
 from fund_lens_models.gold import (
     GoldCandidate,
@@ -27,6 +31,9 @@ from fund_lens_models.silver import (
     SilverFECCandidate,
     SilverFECCommittee,
     SilverFECContribution,
+    SilverMarylandCandidate,
+    SilverMarylandCommittee,
+    SilverMarylandContribution,
 )
 
 # this is the Alembic Config object, which provides

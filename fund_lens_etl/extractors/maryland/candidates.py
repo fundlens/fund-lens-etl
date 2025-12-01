@@ -22,14 +22,23 @@ def get_logger():
         return logging.getLogger(__name__)
 
 
+def _to_str(value: Any) -> str:
+    """Convert value to string, handling None and NaN."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    return str(value)
+
+
 def generate_candidate_hash(
-    office_name: str,
-    district: str,
-    last_name: str,
-    first_name: str,
-    party: str,
-    election_year: int,
-    election_type: str,
+    office_name: Any,
+    district: Any,
+    last_name: Any,
+    first_name: Any,
+    party: Any,
+    election_year: Any,
+    election_type: Any,
 ) -> str:
     """
     Generate SHA-256 hash for candidate deduplication.
@@ -48,13 +57,13 @@ def generate_candidate_hash(
     """
     content = "|".join(
         [
-            office_name or "",
-            district or "",
-            last_name or "",
-            first_name or "",
-            party or "",
-            str(election_year),
-            election_type or "",
+            _to_str(office_name),
+            _to_str(district),
+            _to_str(last_name),
+            _to_str(first_name),
+            _to_str(party),
+            _to_str(election_year),
+            _to_str(election_type),
         ]
     )
     return hashlib.sha256(content.encode()).hexdigest()
@@ -187,13 +196,16 @@ class MarylandCandidateExtractor(BaseExtractor):
         # Rename columns to match model
         df = df.rename(columns=self.COLUMN_MAPPING)
 
-        # Strip whitespace from string columns
+        # Strip whitespace and normalize null values
         for col in df.columns:
             if df[col].dtype == object:
                 df[col] = df[col].str.strip()
-
-        # Replace empty strings with None
-        df = df.replace({"": None, "nan": None, "NaN": None})
+                # Replace various null representations with actual None
+                df[col] = df[col].apply(
+                    lambda x: None
+                    if x in ("", "nan", "NaN", "None", "NULL", "null") or pd.isna(x)
+                    else x
+                )
 
         # Ensure required columns exist
         required_cols = ["office_name", "candidate_last_name", "candidate_first_name", "status"]
