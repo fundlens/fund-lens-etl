@@ -262,6 +262,11 @@ class MarylandSBEClient:
         """
         Generate all possible candidate CSV URLs for a year.
 
+        URL patterns vary by year:
+        - 2018: suffix _1_, primary only (gubernatorial year)
+        - 2020: suffix _3_, primary only (presidential year - no state general)
+        - 2022+: suffix _1_, both primary and general
+
         Args:
             year: Election year
 
@@ -270,10 +275,19 @@ class MarylandSBEClient:
         """
         urls = []
 
+        # Determine URL suffix (2020 uses _3_, others use _1_)
+        suffix = "3" if year == 2020 else "1"
+
+        # Determine which election types are available
+        # Presidential years (2020, 2016, etc.) typically only have primary state candidates
+        # Gubernatorial years (2018, 2022, 2026) have both primary and general
+        is_presidential_year = year % 4 == 0
+        election_types = ["Primary"] if is_presidential_year else ["Primary", "General"]
+
         # Regular elections (even years)
         if year % 2 == 0:
-            for election_type in ["Primary", "General"]:
-                # Handle case inconsistency (2022 uses lowercase, 2024+ uses mixed case)
+            for election_type in election_types:
+                # Handle case inconsistency across years
                 for folder_case in [
                     f"{election_type}_candidates",
                     f"{election_type.lower()}_candidates",
@@ -284,20 +298,22 @@ class MarylandSBEClient:
                             "type": f"{election_type}_State",
                             "url": (
                                 f"{self.BASE_URL}/{year}/{folder_case}/"
-                                f"gen_cand_lists_{year}_1_ALL.csv"
+                                f"gen_cand_lists_{year}_{suffix}_ALL.csv"
                             ),
                         }
                     )
-                    # Local candidates
-                    urls.append(
-                        {
-                            "type": f"{election_type}_Local",
-                            "url": (
-                                f"{self.BASE_URL}/{year}/{folder_case}/"
-                                f"gen_cand_lists_{year}_1_by_county_ALL.csv"
-                            ),
-                        }
-                    )
+                    # Local candidates - try both URL patterns
+                    # Older years use _by_county, some use double underscore
+                    for local_suffix in ["_by_county_ALL.csv", "__by_county_ALL.csv"]:
+                        urls.append(
+                            {
+                                "type": f"{election_type}_Local",
+                                "url": (
+                                    f"{self.BASE_URL}/{year}/{folder_case}/"
+                                    f"gen_cand_lists_{year}_{suffix}{local_suffix}"
+                                ),
+                            }
+                        )
 
         # Special elections (any year)
         for sp_type in ["SP_Primary_Candidate", "SP_General_Candidate"]:
@@ -306,7 +322,7 @@ class MarylandSBEClient:
                     "type": f"Special_{sp_type}",
                     "url": (
                         f"{self.BASE_URL}/{year}/{sp_type}/"
-                        f"gen_cand_lists_{year}_1_by_county_ALL.csv"
+                        f"gen_cand_lists_{year}_{suffix}_by_county_ALL.csv"
                     ),
                 }
             )
@@ -351,9 +367,28 @@ class MarylandSBEClient:
                     if "text/csv" in content_type or "application/csv" in content_type:
                         is_csv = True
                     else:
-                        # Check content - CSV should start with header row
+                        # Check content - CSV should have commas and election-related content
+                        # 2022+ files have header "Office Name", older files have data like "Governor"
                         first_line = response.text.split("\n")[0] if response.text else ""
-                        is_csv = "," in first_line and "Office" in first_line
+                        # Known office types that appear in Maryland election data
+                        election_keywords = [
+                            "Office",  # 2022+ header format
+                            "Governor",
+                            "President",
+                            "Senator",
+                            "Representative",
+                            "Delegate",
+                            "Commissioner",  # County Commissioner
+                            "Board of Education",  # School Board
+                            "Sheriff",
+                            "Council",  # County Council
+                            "Attorney",  # State's Attorney
+                            "Judge",
+                            "Clerk",
+                        ]
+                        is_csv = "," in first_line and any(
+                            kw in first_line for kw in election_keywords
+                        )
 
                     if is_csv:
                         # Check if we've already downloaded this exact content
@@ -363,7 +398,8 @@ class MarylandSBEClient:
                             continue
 
                         seen_content_hashes.add(content_hash)
-                        filename = f"candidates_{year}_{url_info['type']}.csv"
+                        # Use content hash in filename to ensure uniqueness
+                        filename = f"candidates_{year}_{url_info['type']}_{content_hash[:8]}.csv"
                         output_path = output_dir / filename
                         output_path.write_bytes(response.content)
                         logger.info(

@@ -461,11 +461,14 @@ class BronzeToSilverMarylandCandidateTransformer(BaseTransformer):
 
         df = df.rename(columns=column_mapping)
 
-        # 2. Create full name
-        df["name"] = df.apply(
-            lambda row: f"{row['first_name']} {row['last_name']}".strip(),
-            axis=1,
-        )
+        # 2. Create full name and normalize suffixes (remove comma before Jr., Sr., etc.)
+        def create_full_name(row):
+            name = f"{row['first_name']} {row['last_name']}".strip()
+            # Remove comma before suffix (e.g., "John Smith, Jr." -> "John Smith Jr.")
+            name = re.sub(r",\s*(Jr\.?|Sr\.?|II|III|IV|V|2nd|3rd|4th|5th)$", r" \1", name)
+            return name
+
+        df["name"] = df.apply(create_full_name, axis=1)
 
         # 3. Determine active status
         active_statuses = ["active", "seeking the nomination"]
@@ -476,6 +479,13 @@ class BronzeToSilverMarylandCandidateTransformer(BaseTransformer):
             df = self._enrich_with_committee_id(df)
         else:
             df["committee_ccf_id"] = None
+
+        # Ensure committee_ccf_id is proper None not 'NaN' string
+        if "committee_ccf_id" in df.columns:
+            df["committee_ccf_id"] = df["committee_ccf_id"].replace(["nan", "NaN", ""], None)
+            df["committee_ccf_id"] = df["committee_ccf_id"].where(
+                df["committee_ccf_id"].notna(), None
+            )
 
         # 5. Clean text fields
         text_columns = ["name", "first_name", "last_name", "party", "office"]
