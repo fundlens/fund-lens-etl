@@ -174,6 +174,213 @@ def _calculate_match_confidence(row: pd.Series) -> float:
     return min(confidence, 1.0)  # Cap at 1.0
 
 
+def _normalize_fec_name(name: str | None) -> str:
+    """
+    Normalize FEC candidate name from "LAST, FIRST MIDDLE SUFFIX" to "First Middle Last Suffix".
+
+    FEC names are stored as ALL CAPS with "LAST, FIRST" format.
+    This converts them to title case with "First Last" format to match
+    Maryland candidate naming conventions.
+
+    Examples:
+    - "ALSOBROOKS, ANGELA" -> "Angela Alsobrooks"
+    - "CARDIN, BENJAMIN L" -> "Benjamin L. Cardin"
+    - "CONWAY, MARK STEVEN MR. JR." -> "Mark Steven Conway Jr."
+
+    Args:
+        name: FEC candidate name in "LAST, FIRST" format
+
+    Returns:
+        Normalized name in "First Last" title case format
+    """
+    if not name:
+        return name or ""
+
+    # Common suffixes and titles to handle
+    suffixes = {"JR", "JR.", "SR", "SR.", "II", "III", "IV", "V"}
+    titles = {"MR", "MR.", "MRS", "MRS.", "MS", "MS.", "DR", "DR.", "MX", "MX."}
+
+    # Split on comma
+    parts = name.split(",", 1)
+
+    if len(parts) != 2:
+        # No comma, just title-case it
+        return name.title()
+
+    last_name = parts[0].strip()
+    rest = parts[1].strip()
+
+    # Parse the rest to extract first name, middle name(s), and suffix/title
+    words = rest.split()
+    first_middle = []
+    suffix_parts = []
+
+    for word in words:
+        word_upper = word.upper().rstrip(".")
+        if word_upper in suffixes:
+            # Normalize suffix format
+            if word_upper in ("JR", "JR."):
+                suffix_parts.append("Jr.")
+            elif word_upper in ("SR", "SR."):
+                suffix_parts.append("Sr.")
+            else:
+                suffix_parts.append(word_upper)
+        elif word_upper in titles:
+            # Skip titles (MR, MS, etc.)
+            pass
+        else:
+            first_middle.append(word)
+
+    def title_case_name(n: str) -> str:
+        """Title-case a name, handling special cases like McDonald, O'Brien."""
+        n_lower = n.lower()
+        # Handle names like "MCDONALD" -> "McDonald"
+        if n_lower.startswith("mc") and len(n) > 2:
+            return "Mc" + n[2:].title()
+        # Handle names like "O'BRIEN" -> "O'Brien"
+        if n_lower.startswith("o'") and len(n) > 2:
+            return "O'" + n[2:].title()
+        # Handle single-letter middle initials
+        if len(n) == 1:
+            return n.upper() + "."
+        return n.title()
+
+    first_middle_formatted = [title_case_name(w) for w in first_middle]
+    last_formatted = title_case_name(last_name)
+
+    # Build final name: First Middle Last Suffix
+    result_parts = first_middle_formatted + [last_formatted] + suffix_parts
+    return " ".join(result_parts)
+
+
+def _normalize_fec_office(office: str | None) -> tuple[str, str]:
+    """
+    Normalize FEC office code to unified schema and determine jurisdiction level.
+
+    FEC Office Codes:
+    - H: House of Representatives -> US_HOUSE (FEDERAL)
+    - S: Senate -> US_SENATE (FEDERAL)
+    - P: President -> PRESIDENT (FEDERAL)
+
+    Args:
+        office: FEC office code (H, S, P)
+
+    Returns:
+        Tuple of (normalized_office, jurisdiction_level)
+    """
+    if not office:
+        return "OTHER", "FEDERAL"
+
+    office_upper = office.upper().strip()
+
+    office_mapping = {
+        "H": ("US_HOUSE", "FEDERAL"),
+        "S": ("US_SENATE", "FEDERAL"),
+        "P": ("PRESIDENT", "FEDERAL"),
+    }
+
+    # Check if it's already normalized
+    if office_upper in {"US_HOUSE", "US_SENATE", "PRESIDENT"}:
+        return office_upper, "FEDERAL"
+
+    return office_mapping.get(office_upper, (office_upper, "FEDERAL"))
+
+
+def _normalize_fec_committee_type(
+    committee_type: str | None, designation: str | None = None
+) -> str:
+    """
+    Normalize FEC committee type code to unified schema.
+
+    Converts FEC committee type codes to match the normalized schema used for
+    Maryland data: CANDIDATE, PAC, PARTY, SUPER_PAC, OTHER.
+
+    FEC Committee Type Codes:
+    - C: Communication cost
+    - D: Delegate committee
+    - E: Electioneering communication
+    - H: House campaign committee -> CANDIDATE
+    - I: Independent expenditor (person/group) -> OTHER
+    - N: PAC - nonqualified -> PAC
+    - O: Independent expenditure-only (Super PAC) -> SUPER_PAC
+    - P: Presidential campaign committee -> CANDIDATE
+    - Q: PAC - qualified -> PAC
+    - S: Senate campaign committee -> CANDIDATE
+    - U: Single-candidate independent expenditure -> OTHER
+    - V: Hybrid PAC (with Non-Contribution Account) - Nonqualified -> PAC
+    - W: Hybrid PAC (with Non-Contribution Account) - Qualified -> PAC
+    - X: Party - nonqualified -> PARTY
+    - Y: Party - qualified -> PARTY
+    - Z: National party nonfederal account -> PARTY
+
+    FEC Designation Codes (secondary classification):
+    - P: Principal campaign committee -> CANDIDATE
+    - A: Authorized by a candidate -> CANDIDATE
+    - U: Unauthorized -> PAC
+    - B: Lobbyist/registrant PAC -> PAC
+    - D: Leadership PAC -> PAC
+    - J: Joint fundraising committee -> PAC
+
+    Args:
+        committee_type: FEC committee type code (H, S, P, Q, N, O, etc.)
+        designation: FEC designation code (P, A, U, B, D, J) - optional secondary signal
+
+    Returns:
+        Normalized committee type (CANDIDATE, PAC, PARTY, SUPER_PAC, OTHER)
+    """
+    if not committee_type:
+        return "OTHER"
+
+    ct = committee_type.upper().strip()
+
+    # Direct mapping for FEC committee type codes
+    fec_type_mapping = {
+        # Candidate committees
+        "H": "CANDIDATE",  # House
+        "S": "CANDIDATE",  # Senate
+        "P": "CANDIDATE",  # Presidential
+        # PACs
+        "N": "PAC",  # PAC - nonqualified
+        "Q": "PAC",  # PAC - qualified
+        "V": "PAC",  # Hybrid PAC - nonqualified
+        "W": "PAC",  # Hybrid PAC - qualified
+        # Super PACs
+        "O": "SUPER_PAC",  # Independent expenditure-only (Super PAC)
+        # Party committees
+        "X": "PARTY",  # Party - nonqualified
+        "Y": "PARTY",  # Party - qualified
+        "Z": "PARTY",  # National party nonfederal account
+        # Other/Misc
+        "C": "OTHER",  # Communication cost
+        "D": "OTHER",  # Delegate committee
+        "E": "OTHER",  # Electioneering communication
+        "I": "OTHER",  # Independent expenditor (person/group)
+        "U": "OTHER",  # Single-candidate independent expenditure
+    }
+
+    # Check if it's already a normalized type (from MD data)
+    if ct in {"CANDIDATE", "PAC", "PARTY", "SUPER_PAC", "OTHER"}:
+        return ct
+
+    # Look up in FEC type mapping
+    if ct in fec_type_mapping:
+        return fec_type_mapping[ct]
+
+    # Fall back to designation if committee_type doesn't match
+    if designation:
+        designation_mapping = {
+            "P": "CANDIDATE",  # Principal campaign committee
+            "A": "CANDIDATE",  # Authorized by candidate
+            "U": "PAC",  # Unauthorized (PAC)
+            "B": "PAC",  # Lobbyist/registrant PAC
+            "D": "PAC",  # Leadership PAC
+            "J": "PAC",  # Joint fundraising committee
+        }
+        return designation_mapping.get(designation.upper().strip(), "OTHER")
+
+    return "OTHER"
+
+
 # noinspection PyArgumentEqualDefault
 @task(
     name="transform_contributors",
@@ -447,20 +654,44 @@ def transform_committees_task(
         loaded_count = 0
         updated_count = 0
 
-        # NOT EXISTS already filtered out existing committees, so just bulk insert
-        committees = [
-            GoldCommittee(
-                fec_committee_id=row["source_committee_id"],
-                name=row["name"],
-                committee_type=row.get("committee_type") or "UNKNOWN",
-                party=row.get("party"),
-                state=row.get("state"),
-                city=row.get("city"),
-                candidate_id=None,  # Will be set during contribution processing if needed
-                is_active=True,
+        # Build candidate lookup for linking committees to 2026+ candidates
+        candidate_lookup = {}
+        for row in session.execute(
+            select(GoldCandidate.id, GoldCandidate.fec_candidate_id).where(
+                GoldCandidate.fec_candidate_id.isnot(None)
             )
-            for _, row in df.iterrows()
-        ]
+        ):
+            candidate_lookup[row.fec_candidate_id] = row.id
+        logger.info(f"Built candidate lookup with {len(candidate_lookup)} FEC candidates")
+
+        # NOT EXISTS already filtered out existing committees, so just bulk insert
+        # Normalize FEC committee types to unified schema (CANDIDATE, PAC, PARTY, SUPER_PAC, OTHER)
+        # Link to gold_candidate if the silver committee has a candidate_id matching a 2026+ candidate
+        committees = []
+        linked_count = 0
+        for _, row in df.iterrows():
+            fec_candidate_id = row.get("candidate_id")
+            gold_candidate_id = candidate_lookup.get(fec_candidate_id) if fec_candidate_id else None
+            if gold_candidate_id:
+                linked_count += 1
+
+            committees.append(
+                GoldCommittee(
+                    fec_committee_id=row["source_committee_id"],
+                    name=row["name"],
+                    committee_type=_normalize_fec_committee_type(
+                        row.get("committee_type"),
+                        row.get("designation"),
+                    ),
+                    party=row.get("party"),
+                    state=row.get("state"),
+                    city=row.get("city"),
+                    candidate_id=gold_candidate_id,
+                    is_active=True,
+                )
+            )
+
+        logger.info(f"Linked {linked_count} committees to 2026+ candidates")
 
         session.add_all(committees)
         session.commit()
@@ -484,38 +715,45 @@ def transform_committees_task(
 )
 def transform_candidates_task(
     state: str | None = None,
-    cycle: int | None = None,
+    min_cycle: int = 2026,
 ) -> dict[str, Any]:
     """
     Transform silver candidates to gold dimension.
+
+    Only candidates who have filed for elections in min_cycle or later
+    are included. This ensures gold layer only contains "active" candidates
+    who are actually running in current/upcoming cycles.
 
     No deduplication needed - candidates have unique IDs from FEC.
     This is a straightforward mapping with some enrichment.
 
     Args:
         state: Optional state filter (e.g., "MD")
-        cycle: Optional election cycle filter (e.g., 2026)
+        min_cycle: Minimum election cycle to include (default: 2026).
+            Only candidates with election_cycle >= this value are transformed.
 
     Returns:
         Dictionary with transformation statistics
     """
     logger = get_logger()
-    logger.info("Starting candidate transformation to gold layer")
+    logger.info(f"Starting candidate transformation to gold layer (min_cycle={min_cycle})")
 
     with get_session() as session:
         # OPTIMIZATION: Use NOT EXISTS to only select Silver candidates not yet in Gold
+        # AND only those filing for elections >= min_cycle
         subquery = (
             select(GoldCandidate.fec_candidate_id)
             .where(GoldCandidate.fec_candidate_id == SilverFECCandidate.source_candidate_id)
             .exists()
         )
-        stmt = select(SilverFECCandidate).where(~subquery)
+        stmt = select(SilverFECCandidate).where(
+            ~subquery,
+            SilverFECCandidate.election_cycle >= min_cycle,
+        )
 
-        # Apply filters if provided
+        # Apply state filter if provided
         if state:
             stmt = stmt.where(SilverFECCandidate.state == state)
-        if cycle:
-            stmt = stmt.where(SilverFECCandidate.election_cycle == cycle)
 
         # Load into DataFrame
         df = pd.read_sql(stmt, session.connection())
@@ -534,18 +772,30 @@ def transform_candidates_task(
         updated_count = 0
 
         # NOT EXISTS already filtered out existing candidates, so just bulk insert
-        candidates = [
-            GoldCandidate(
-                fec_candidate_id=row["source_candidate_id"],
-                name=row["name"],
-                office=row["office"],
-                state=row.get("state"),
-                district=row.get("district"),
-                party=row.get("party"),
-                is_active=row.get("is_active", True),
+        # Normalize FEC names ("LAST, FIRST" -> "First Last") and office codes
+        candidates = []
+        for _, row in df.iterrows():
+            normalized_office, jurisdiction_level = _normalize_fec_office(row["office"])
+            normalized_name = _normalize_fec_name(row["name"])
+
+            # Derive election year from cycle (even cycles = general election year)
+            election_cycle = row.get("election_cycle")
+            election_year = election_cycle if election_cycle else None
+
+            candidates.append(
+                GoldCandidate(
+                    fec_candidate_id=row["source_candidate_id"],
+                    name=normalized_name,
+                    office=normalized_office,
+                    jurisdiction_level=jurisdiction_level,
+                    state=row.get("state"),
+                    district=row.get("district"),
+                    party=row.get("party"),
+                    first_election_year=election_year,
+                    last_election_year=election_year,
+                    is_active=row.get("is_active", True),
+                )
             )
-            for _, row in df.iterrows()
-        ]
 
         session.add_all(candidates)
         session.commit()

@@ -77,7 +77,7 @@ class MarylandCandidateExtractor(BaseExtractor):
     Generates content hash for each record to enable deduplication.
     """
 
-    # Column mapping from CSV headers to model fields
+    # Column mapping from CSV headers to model fields (2022+ format)
     COLUMN_MAPPING = {
         "Office Name": "office_name",
         "Contest Run By District Name and Number": "district",
@@ -100,6 +100,41 @@ class MarylandCandidateExtractor(BaseExtractor):
         "Committee Name": "committee_name",
     }
 
+    # Legacy column mappings for 2018 format (no header, separate first/last name)
+    LEGACY_2018_COLUMNS = [
+        "office_name",  # col 0
+        "district",  # col 1
+        "candidate_last_name",  # col 2
+        "candidate_first_name",  # col 3
+        "party",  # col 4
+        "jurisdiction",  # col 5
+        "status",  # col 6
+        "filing_type_and_date",  # col 7
+        "email",  # col 8
+        "website",  # col 9
+        "facebook",  # col 10
+        "twitter",  # col 11
+        "other_social",  # col 12
+        # Columns 13+ are related candidate info (Lt. Gov, etc.) - ignore for now
+    ]
+
+    # Legacy column mappings for 2020 format (no header, combined name)
+    LEGACY_2020_COLUMNS = [
+        "office_name",  # col 0
+        "district",  # col 1
+        "candidate_full_name",  # col 2 (combined name - needs parsing)
+        "party",  # col 3
+        "jurisdiction",  # col 4
+        "status",  # col 5
+        "filing_type_and_date",  # col 6
+        "email",  # col 7
+        "website",  # col 8
+        "facebook",  # col 9
+        "twitter",  # col 10
+        "other_social",  # col 11
+        # Columns 12+ are related candidate info - ignore for now
+    ]
+
     def __init__(self, client: MarylandSBEClient | None = None):
         """
         Initialize extractor.
@@ -112,6 +147,67 @@ class MarylandCandidateExtractor(BaseExtractor):
     def get_source_name(self) -> str:
         """Get source system identifier."""
         return "MARYLAND_SBE"
+
+    def _is_legacy_format(self, csv_path: Path) -> bool:
+        """Check if CSV is in legacy format (no header row)."""
+        with open(csv_path, encoding="utf-8-sig") as f:
+            first_line = f.readline()
+            # 2022+ format has "Office Name" as first column header
+            return "Office Name" not in first_line
+
+    def _read_legacy_csv(self, csv_path: Path, year: int, logger: Any) -> pd.DataFrame:
+        """
+        Read legacy CSV format (2018-2020) without headers.
+
+        Args:
+            csv_path: Path to CSV file
+            year: Election year (determines column layout)
+            logger: Logger instance
+
+        Returns:
+            DataFrame with standardized column names
+        """
+        # Read without header
+        df = pd.read_csv(csv_path, header=None, dtype=str, encoding="utf-8-sig")
+
+        if year == 2018:
+            # 2018 format: separate last/first name columns
+            col_names = self.LEGACY_2018_COLUMNS
+            # Only use columns we have mappings for
+            df = df.iloc[:, : len(col_names)]
+            df.columns = pd.Index(col_names)
+        elif year == 2020:
+            # 2020 format: combined full name
+            col_names = self.LEGACY_2020_COLUMNS
+            df = df.iloc[:, : len(col_names)]
+            df.columns = pd.Index(col_names)
+
+            # Parse full name into first/last
+            def parse_full_name(name: str | None) -> tuple[str | None, str | None]:
+                """Parse 'First Middle Last' or 'First Last' into (last, first)."""
+                if not name or pd.isna(name):
+                    return None, None
+                name = str(name).strip()
+                if not name:
+                    return None, None
+                parts = name.split()
+                if len(parts) == 1:
+                    return parts[0], None
+                # Assume last word is last name, rest is first/middle
+                last_name = parts[-1]
+                first_name = " ".join(parts[:-1])
+                return last_name, first_name
+
+            # Apply parsing
+            parsed = df["candidate_full_name"].apply(parse_full_name)
+            df["candidate_last_name"] = parsed.apply(lambda x: x[0])
+            df["candidate_first_name"] = parsed.apply(lambda x: x[1])
+            df = df.drop(columns=["candidate_full_name"])
+        else:
+            raise ValueError(f"Unsupported legacy format year: {year}")
+
+        logger.info(f"Parsed legacy {year} format with {len(df)} records")
+        return df
 
     def extract(
         self,
@@ -168,7 +264,12 @@ class MarylandCandidateExtractor(BaseExtractor):
                 election_type = "Primary"
 
             try:
-                df = pd.read_csv(csv_path, dtype=str)
+                # Check for legacy format (2018, 2020)
+                if self._is_legacy_format(csv_path):
+                    logger.info(f"Detected legacy format for {filename}")
+                    df = self._read_legacy_csv(csv_path, year, logger)
+                else:
+                    df = pd.read_csv(csv_path, dtype=str)
                 logger.info(f"Read {len(df)} records from {filename}")
 
                 # Add election metadata
@@ -212,6 +313,16 @@ class MarylandCandidateExtractor(BaseExtractor):
         missing_cols = [col for col in required_cols if col not in df.columns]
         if missing_cols:
             raise ValueError(f"CSV missing required columns: {missing_cols}")
+
+        # Filter out rows with null required fields (malformed CSV rows)
+        initial_count = len(df)
+        for col in required_cols:
+            null_count = df[col].isna().sum()
+            if null_count > 0:
+                logger.warning(f"Found {null_count} rows with null {col} - filtering out")
+        df = df.dropna(subset=required_cols)
+        if len(df) < initial_count:
+            logger.warning(f"Filtered out {initial_count - len(df)} rows with null required fields")
 
         # Generate content hash for deduplication
         df["content_hash"] = df.apply(
